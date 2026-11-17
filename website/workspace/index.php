@@ -116,6 +116,7 @@ $groups = [
             ['label' => 'X230 终端 / 公网', 'sub' => 'term · 折叠对话', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'term'), 'tag' => 'PUBLIC'],
             ['label' => 'X230 终端 / 局域网', 'sub' => '192.168.8.120:3902 · webterm', 'href' => 'http://192.168.8.120:3902/', 'tag' => 'LAN'],
             ['label' => 'Gitea / 代码', 'sub' => 'git', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'git'), 'tag' => 'PUBLIC'],
+            ['label' => 'GitHub / 代码', 'sub' => 'zts8989898937-coder', 'href' => 'https://github.com/zts8989898937-coder?tab=repositories', 'tag' => 'CLOUD'],
             ['label' => 'JupyterLab / 计算', 'sub' => 'jupyter', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'jupyter'), 'tag' => 'GATE'],
             ['label' => 'BLOG / 专属写作台', 'sub' => 'MUSIC & ALGO WRITER', 'href' => '/workspace/write/', 'tag' => 'MAIN'],
             ['label' => 'BLOG / 后台', 'sub' => 'WORDPRESS', 'href' => 'https://stillfloating.top/wp-admin/', 'tag' => 'PUBLIC'],
@@ -241,7 +242,7 @@ $totalGroups = count($groups);
 <meta name="theme-color" content="#0a0a0c">
 <title>Workspace — Still Floating</title>
 <script>(function(){try{var t=localStorage.getItem('sf-ws-sky');if(t==='neptune'||t==='blackhole'||t==='betelgeuse')document.documentElement.setAttribute('data-theme',t);}catch(_){}})();</script>
-<link rel="stylesheet" href="/workspace/ws.css?v=14">
+<link rel="stylesheet" href="/workspace/ws.css?v=15">
 </head>
 <body>
 <div id="boot" aria-hidden="true">
@@ -427,6 +428,25 @@ $totalGroups = count($groups);
       </div>
     </section>
 
+    <section class="ws-cf" id="ws-cf" aria-label="Codeforces 状态">
+      <div class="ws-cf-bar">
+        <button type="button" class="ws-cf-toggle" id="ws-cf-toggle" aria-expanded="false" aria-controls="ws-cf-drawer">
+          <span class="ws-qtitle">CODEFORCES</span>
+          <span class="ws-cf-summary" id="ws-cf-summary">zhang_tian_si_or_a_li · 读取中…</span>
+        </button>
+        <div class="ws-qacts">
+          <a class="ws-qbtn" href="https://codeforces.com/profile/zhang_tian_si_or_a_li" target="_blank" rel="noopener">主页 ↗</a>
+          <button type="button" class="ws-qbtn" id="ws-cf-btn-detail">详情 <span class="ws-qchev">▾</span></button>
+          <button type="button" class="ws-qbtn" id="ws-cf-refresh" title="刷新 Codeforces 状态"><span>↻</span></button>
+        </div>
+      </div>
+      <div class="ws-cf-drawer" id="ws-cf-drawer" aria-hidden="true">
+        <div class="ws-cf-drawer-inner">
+          <div class="ws-cf-grid" id="ws-cf-grid"></div>
+        </div>
+      </div>
+    </section>
+
     <div class="ws-hud">
       <div class="ws-chips" role="tablist" aria-label="切换航点">
         <?= $chips ?>
@@ -466,7 +486,7 @@ $totalGroups = count($groups);
   </div>
 </div>
 
-<script src="/workspace/ws.js?v=14"></script>
+<script src="/workspace/ws.js?v=15"></script>
 </body>
 </html>
 

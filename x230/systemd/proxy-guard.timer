@@ -3,7 +3,7 @@ Description=Run proxy-guard every 5 minutes
 
 [Timer]
 OnBootSec=3min
-OnUnitActiveSec=5min
+OnUnitActiveSec=2min
 AccuracySec=30s
 
 [Install]

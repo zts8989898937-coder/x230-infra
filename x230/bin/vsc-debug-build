@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-in}"
+src="${2:-}"
+if [[ ! -f "$src" ]]; then
+  echo '请先打开并保存要调试的 C/C++ 源文件。' >&2
+  exit 2
+fi
+dir=$(cd -- "$(dirname -- "$src")" && pwd)
+src="$dir/$(basename -- "$src")"
+case "$src" in
+  *.c) compiler=/usr/bin/gcc; standard=-std=c17 ;;
+  *.cpp|*.cc|*.cxx|*.C) compiler=/usr/bin/g++; standard=-std=c++17 ;;
+  *) echo '调试仅支持 C/C++ 源文件，请先切回代码标签页。' >&2; exit 2 ;;
+esac
+if [[ "$mode" == in && ! -s "$dir/in.txt" ]]; then
+  printf '样例输入文件不存在或为空：%s/in.txt\n' "$dir" >&2
+  echo '请填写样例输入，或在运行和调试面板选择「gdb 调试（键盘输入）」。' >&2
+  exit 2
+fi
+printf '[调试编译] %s\n' "$(basename -- "$src")"
+# 每次重编译，确保源码、本地头文件和编译参数的修改都会生效。
+"$compiler" "$standard" -O0 -g -Wall -Wextra -DLOCAL -o "${src%.*}.debug" "$src"
+echo '[调试编译完成] 可使用断点和变量查看。'

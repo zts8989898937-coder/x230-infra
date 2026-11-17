@@ -14,103 +14,151 @@ ext="${file##*.}"
 stem="${file%.*}"
 cd "$dir" || exit 1
 
-run_bin() {
-  local bin="$1"
-  local m="$2"
-  local rc=0 t0 t1 ms
-  if [ "$m" = "kbd" ] || [ ! -s "in.txt" ]; then
-    if [ "$m" != "kbd" ] && [ ! -s "in.txt" ]; then
-      printf '\033[2m[键盘输入模式] 直接输入后按 Enter（结束输入 Ctrl+D）\033[0m\n'
-    else
-      printf '\033[2m==> 运行 ./%s（可直接输入/粘贴测试数据）\033[0m\n' "$stem"
-    fi
-    t0=$(date +%s%3N)
-    "$bin"
-    rc=$?
-    t1=$(date +%s%3N)
+C_HEAD='\033[1;36m'
+C_OK='\033[1;32m'
+C_ERR='\033[1;31m'
+C_WARN='\033[1;33m'
+C_DIM='\033[2m'
+C_RST='\033[0m'
+
+print_section() {
+  printf "\n${C_HEAD}══════════ %s ══════════${C_RST}\n" "$1"
+}
+
+show_input_file() {
+  local infile="$1"
+  if [ ! -s "$infile" ]; then
+    printf "${C_WARN}(输入文件 %s 为空)${C_RST}\n" "$infile"
+    return
+  fi
+  local lines
+  lines=$(wc -l < "$infile")
+  if [ "$lines" -gt 120 ]; then
+    head -n 120 "$infile"
+    printf "\n${C_DIM}... (共 %s 行，仅显示前 120 行)${C_RST}\n" "$lines"
   else
-    printf '\033[2m==> 运行 ./%s < in.txt\033[0m\n' "$stem"
+    cat "$infile"
+    # Ensure trailing newline before next header
+    [ -n "$(tail -c 1 "$infile" 2>/dev/null)" ] && printf '\n'
+  fi
+}
+
+execute_with_labeled_io() {
+  local label_cmd="$1"
+  shift
+  local tmp_in tmp_out rc=0 t0 t1 ms
+  if [ "$mode" != "kbd" ] && [ ! -s "in.txt" ]; then
+    printf "${C_ERR}样例输入文件不存在或为空：%s/in.txt${C_RST}\n" "$dir" >&2
+    printf "请在源文件同目录填写 in.txt，或选择「运行（键盘输入）」。\n" >&2
+    return 2
+  fi
+  tmp_out=$(mktemp)
+
+  if [ "$mode" = "kbd" ]; then
+    print_section "[2/3 输入 · 键盘模式]"
+    printf "${C_DIM}请直接输入或粘贴数据；完成后按 Ctrl+D（或新起一行输入 END 回车）开始运行：${C_RST}\n"
+    tmp_in=$(mktemp)
+    while IFS= read -r line || [ -n "$line" ]; do
+      if [ "$line" = "END" ] || [ "$line" = "end" ]; then
+        break
+      fi
+      printf '%s\n' "$line" >> "$tmp_in"
+    done
+    print_section "[3/3 输出 · $label_cmd]"
     t0=$(date +%s%3N)
-    "$bin" < "in.txt"
-    rc=$?
+    "$@" < "$tmp_in" 2>&1 | tee "$tmp_out"
+    rc=${PIPESTATUS[0]}
+    t1=$(date +%s%3N)
+    rm -f "$tmp_in"
+  else
+    print_section "[2/3 输入 · in.txt]"
+    show_input_file "in.txt"
+    print_section "[3/3 输出 · $label_cmd]"
+    t0=$(date +%s%3N)
+    "$@" < "in.txt" 2>&1 | tee "$tmp_out"
+    rc=${PIPESTATUS[0]}
     t1=$(date +%s%3N)
   fi
+
+  if [ -s "$tmp_out" ]; then
+    [ -n "$(tail -c 1 "$tmp_out" 2>/dev/null)" ] && printf '\n'
+  else
+    printf "${C_WARN}(无任何输出)${C_RST}\n"
+  fi
+  rm -f "$tmp_out"
+
   ms=$((t1 - t0))
-  printf '\n\033[2m[结束 code=%s · 运行 %sms]\033[0m\n' "$rc" "$ms"
+  if [ "$rc" -eq 0 ]; then
+    printf "${C_OK}✓ [运行完成] exit=%s · 耗时 %sms${C_RST}\n" "$rc" "$ms"
+  else
+    printf "${C_ERR}✗ [异常退出] exit=%s · 耗时 %sms${C_RST}\n" "$rc" "$ms"
+  fi
   return $rc
+}
+
+compile_c_family() {
+  local compiler="$1" std_flag="$2" opt_flag="$3" pch_dir="$4"
+  local bin="$dir/$stem"
+  local mode_tag="/tmp/.vsc_mode_$(id -u)_$(printf '%s' "$bin" | md5sum | cut -d' ' -f1)"
+  local prev_mode need_build=0 t0 t1
+
+  prev_mode=$(cat "$mode_tag" 2>/dev/null || true)
+  if [ ! -x "$bin" ] || [ "$file" -nt "$bin" ]; then
+    need_build=1
+  elif [ "$mode" != "$prev_mode" ] && { [ "$mode" = "o2" ] || [ "$prev_mode" = "o2" ]; }; then
+    need_build=1
+  fi
+
+  print_section "[1/3 编译 · $file ($opt_flag)]"
+  if [ "$need_build" = "1" ]; then
+    local pch_opt=""
+    [ -n "$pch_dir" ] && [ -f "$pch_dir/bits/stdc++.h.gch" ] && pch_opt="-I$pch_dir"
+    t0=$(date +%s%3N)
+    local dbg_flag=""; [ "$opt_flag" = "-O2" ] && dbg_flag="-g"
+    if "$compiler" -fdiagnostics-color=always $std_flag $opt_flag $dbg_flag -Wall -Wextra -DLOCAL $pch_opt -o "$bin" "$file"; then
+      t1=$(date +%s%3N)
+      [ "$opt_flag" = "-O2" ] && printf 'o2' > "$mode_tag" || printf 'o0' > "$mode_tag"
+      printf "${C_OK}✓ 编译成功 (%sms)${C_RST}\n" "$((t1 - t0))"
+    else
+      printf "${C_ERR}✗ 编译失败（请检查上方报错）${C_RST}\n"
+      exit 1
+    fi
+  else
+    printf "${C_OK}✓ 跳过编译（二进制已是最新）${C_RST}\n"
+  fi
+
+  execute_with_labeled_io "./$stem" "$bin"
 }
 
 case "$ext" in
   cpp|cc|cxx|C)
-    bin="$dir/$stem"
-    mode_tag="/tmp/.vsc_mode_$(printf '%s' "$bin" | md5sum | cut -d' ' -f1)"
-    prev_mode=$(cat "$mode_tag" 2>/dev/null || true)
-    need_build=0
-    if [ ! -x "$bin" ] || [ "$file" -nt "$bin" ]; then
-      need_build=1
-    elif [ "$mode" = "o2" ] && [ "$prev_mode" != "o2" ]; then
-      need_build=1
-    fi
-
-    if [ "$need_build" = "1" ]; then
-      t0=$(date +%s%3N)
-      if [ "$mode" = "o2" ]; then
-        pch_opt=""
-        [ -f /opt/pch/o2/bits/stdc++.h.gch ] && pch_opt="-I/opt/pch/o2"
-        printf '\033[2m==> 编译 (O2) %s\033[0m\n' "$file"
-        g++ -fdiagnostics-color=always -std=c++17 -O2 -g -Wall -Wextra -DLOCAL $pch_opt -o "$bin" "$file" || {
-          printf '\033[31m==> 编译失败\033[0m\n'
-          exit 1
-        }
-        printf 'o2' > "$mode_tag"
-      else
-        pch_opt=""
-        [ -f /opt/pch/o0/bits/stdc++.h.gch ] && pch_opt="-I/opt/pch/o0"
-        printf '\033[2m==> 编译 %s\033[0m\n' "$file"
-        g++ -fdiagnostics-color=always -std=c++17 -O0 -Wall -Wextra -DLOCAL $pch_opt -o "$bin" "$file" || {
-          printf '\033[31m==> 编译失败\033[0m\n'
-          exit 1
-        }
-        printf 'o0' > "$mode_tag"
-      fi
-      t1=$(date +%s%3N)
-      printf '\033[2m[编译完成 %sms]\033[0m\n' "$((t1 - t0))"
+    if [ "$mode" = "o2" ]; then
+      compile_c_family g++ -std=c++17 -O2 /opt/pch/o2
     else
-      printf '\033[2m[跳过编译，二进制已是最新]\033[0m\n'
+      compile_c_family g++ -std=c++17 -O0 /opt/pch/o0
     fi
-    run_bin "$bin" "$mode"
     ;;
   c)
-    bin="$dir/$stem"
-    if [ ! -x "$bin" ] || [ "$file" -nt "$bin" ] || [ "$mode" = "o2" ]; then
-      t0=$(date +%s%3N)
-      opt="-O0"
-      [ "$mode" = "o2" ] && opt="-O2 -g"
-      printf '\033[2m==> 编译 %s\033[0m\n' "$file"
-      gcc -fdiagnostics-color=always $opt -Wall -Wextra -DLOCAL -o "$bin" "$file" || {
-        printf '\033[31m==> 编译失败\033[0m\n'
-        exit 1
-      }
-      t1=$(date +%s%3N)
-      printf '\033[2m[编译完成 %sms]\033[0m\n' "$((t1 - t0))"
+    if [ "$mode" = "o2" ]; then
+      compile_c_family gcc "" -O2 ""
+    else
+      compile_c_family gcc "" -O0 ""
     fi
-    run_bin "$bin" "$mode"
     ;;
   py)
-    t0=$(date +%s%3N)
-    if [ "$mode" != "kbd" ] && [ -s "in.txt" ]; then
-      printf '\033[2m==> python3 %s < in.txt\033[0m\n' "$file"
-      python3 "$file" < "in.txt"
+    print_section "[1/3 检查 · $file (Python3)]"
+    if python3 -m py_compile "$file"; then
+      printf "${C_OK}✓ 语法检查通过${C_RST}\n"
     else
-      printf '\033[2m==> python3 %s\033[0m\n' "$file"
-      python3 "$file"
+      printf "${C_ERR}✗ 语法错误${C_RST}\n"
+      exit 1
     fi
-    rc=$?
-    t1=$(date +%s%3N)
-    printf '\n\033[2m[结束 code=%s · 运行 %sms]\033[0m\n' "$rc" "$((t1 - t0))"
-    exit $rc
+    execute_with_labeled_io "python3 $file" python3 -u "$file"
     ;;
   sh)
+    print_section "[1/3 检查 · $file (Bash)]"
+    bash -n "$file" || { printf "${C_ERR}✗ 语法错误${C_RST}\n"; exit 1; }
+    printf "${C_OK}✓ 语法检查通过${C_RST}\n"
     bash "$file"
     ;;
   *)

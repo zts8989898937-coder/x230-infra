@@ -2114,7 +2114,106 @@ body.pal-open { overflow: hidden; }
 .ws-pal-row > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
 .ws-pal-esc:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
 #ws-qbtn-refresh:disabled,
-#ws-vpn-refresh:disabled { opacity: .45; cursor: wait; }
+#ws-vpn-refresh:disabled,
+#ws-cf-refresh:disabled { opacity: .45; cursor: wait; }
+
+.ws-cf {
+  position: relative;
+  border-bottom: 1px solid var(--line-soft);
+  padding: 12px 0 14px;
+}
+.ws-cf-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  flex-wrap: wrap;
+}
+.ws-cf-toggle {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.ws-cf-summary {
+  font: 11px var(--mono);
+  color: var(--ink-muted);
+  letter-spacing: 0.04em;
+}
+.ws-cf-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s var(--ease-std);
+}
+.ws-cf.is-open .ws-cf-drawer {
+  grid-template-rows: 1fr;
+}
+.ws-cf.is-open #ws-cf-btn-detail .ws-qchev {
+  display: inline-block;
+  transform: rotate(180deg);
+}
+.ws-cf-drawer-inner {
+  overflow: hidden;
+}
+.ws-cf-grid {
+  padding-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.ws-cf-card {
+  border-left: 1px dotted var(--line);
+  padding-left: 14px;
+}
+.ws-cf-card:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+.ws-cf-card-hd {
+  font: 10px var(--mono);
+  letter-spacing: 0.14em;
+  color: var(--ink-subtle);
+  margin-bottom: 8px;
+}
+.ws-cf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font: 11px var(--mono);
+}
+.ws-cf-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 2px 0;
+}
+.ws-cf-item:hover { color: var(--signal); }
+.ws-cf-ok { color: #6ee7b7; }
+.ws-cf-err { color: #fda4af; }
+@media (max-width: 780px) {
+  .ws-cf-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .ws-cf-card {
+    border-left: 0;
+    border-top: 1px dotted var(--line);
+    padding: 10px 0 0;
+  }
+  .ws-cf-card:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+}
 .ws-live-tag {
   display: inline-flex;
   align-items: center;

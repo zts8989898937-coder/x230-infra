@@ -725,6 +725,68 @@
     loadQuota(true);
   });
 
+  /* ---- Codeforces Status (/workspace/cf.php) ---- */
+  var cfBox = document.getElementById('ws-cf');
+  var cfToggleBtn = document.getElementById('ws-cf-toggle');
+  var cfDetailBtn = document.getElementById('ws-cf-btn-detail');
+  var cfRefreshBtn = document.getElementById('ws-cf-refresh');
+  var cfDrawer = document.getElementById('ws-cf-drawer');
+  var cfSummary = document.getElementById('ws-cf-summary');
+  var cfGrid = document.getElementById('ws-cf-grid');
+
+  function toggleCfDrawer(open) {
+    if (!cfBox || !cfDrawer) return;
+    var next = typeof open === 'boolean' ? open : !cfBox.classList.contains('is-open');
+    cfBox.classList.toggle('is-open', next);
+    cfDrawer.setAttribute('aria-hidden', String(!next));
+    if (cfToggleBtn) cfToggleBtn.setAttribute('aria-expanded', String(next));
+    if (cfDetailBtn) cfDetailBtn.innerHTML = (next ? '收起 ' : '详情 ') + '<span class="ws-qchev">▾</span>';
+  }
+
+  function renderCf(d) {
+    if (!d || !d.profile) return;
+    var p = d.profile;
+    var st = d.stats || {};
+    var ratingText = p.rating ? (p.rating + ' · ' + (p.rank || '')) : 'Unrated';
+    if (cfSummary) {
+      cfSummary.textContent = (p.handle || 'zhang_tian_si_or_a_li') + ' · ' + ratingText + ' · 近60交 ' + (st.recentAc || 0) + ' AC / ' + (st.unsolvedCount || 0) + ' 待补';
+    }
+    if (!cfGrid) return;
+    var subs = Array.isArray(d.submissions) ? d.submissions : [];
+    var wrongs = Array.isArray(d.wrongProblems) ? d.wrongProblems : [];
+    var subHtml = subs.length
+      ? subs.slice(0, 6).map(function (s) {
+          var cls = s.verdict === 'OK' ? 'ws-cf-ok' : 'ws-cf-err';
+          return '<a class="ws-cf-item" href="' + escHtml(s.submissionUrl || s.problemUrl || '#') + '" target="_blank" rel="noopener"><span>' + escHtml((s.code || '') + ' ' + (s.name || '')) + '</span><span class="' + cls + '">' + escHtml(s.verdict || '') + '</span></a>';
+        }).join('')
+      : '<div class="ws-qerr">暂无提交记录，去 <a href="/workspace/write/" style="color:var(--signal)">写作台</a> 或刷题工作区开第一题。</div>';
+    var wrongHtml = wrongs.length
+      ? wrongs.slice(0, 6).map(function (w) {
+          return '<a class="ws-cf-item" href="' + escHtml(w.problemUrl || '#') + '" target="_blank" rel="noopener"><span>' + escHtml((w.code || '') + ' ' + (w.name || '')) + '</span><span class="ws-cf-err">' + escHtml(w.lastVerdict + ' ×' + w.attempts) + '</span></a>';
+        }).join('')
+      : '<div class="ws-qerr">暂无未 AC 错题。</div>';
+    cfGrid.innerHTML =
+      '<div class="ws-cf-card"><div class="ws-cf-card-hd">RECENT SUBMISSIONS / 近期提交</div><div class="ws-cf-list">' + subHtml + '</div></div>' +
+      '<div class="ws-cf-card"><div class="ws-cf-card-hd">UNSOLVED / 待补错题</div><div class="ws-cf-list">' + wrongHtml + '</div></div>';
+  }
+
+  function loadCf(force) {
+    if (!cfBox) return;
+    if (cfRefreshBtn) cfRefreshBtn.disabled = true;
+    fetch('/workspace/cf.php' + (force ? '?force=1' : ''), { cache: 'no-store', credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (d) { renderCf(d); })
+      .catch(function (err) {
+        if (cfSummary) cfSummary.textContent = 'zhang_tian_si_or_a_li · 读取失败 (' + err.message + ')';
+      })
+      .finally(function () { if (cfRefreshBtn) cfRefreshBtn.disabled = false; });
+  }
+
+  if (cfToggleBtn) cfToggleBtn.addEventListener('click', function () { toggleCfDrawer(); });
+  if (cfDetailBtn) cfDetailBtn.addEventListener('click', function () { toggleCfDrawer(); });
+  if (cfRefreshBtn) cfRefreshBtn.addEventListener('click', function () { loadCf(true); });
+  if (cfBox) loadCf(false);
+
   /* ---- Command Palette (⌘K / /) ---- */
   var pal = document.getElementById('ws-pal');
   var palInput = document.getElementById('ws-pal-input');
