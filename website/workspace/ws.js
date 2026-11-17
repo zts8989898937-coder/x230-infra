@@ -377,16 +377,20 @@
     if (jsonStr === qLastUsageJson) return;
     qLastUsageJson = jsonStr;
     var br = u.breakdown || {};
-    var subSavedUsd = Math.max(0, (Number(u.apiValueUsd) || 0) - (Number(u.paygSpentUsd) || 0));
-    var subSavedCny = Math.max(0, (Number(u.apiValueCny) || 0) - (Number(u.paygSpentCny) || 0));
+    var confirmed = u.confirmedBilledUsd;
+    var estimated = Number(u.estimatedPaygUsd || 0);
+    var native = u.nativeAntigravity;
+    var nativeStatus = native ? ((native.complete ? '' : '统计存在缺口；') + 'Antigravity 原生：' + native.files + ' 个库 · ' + native.generations + ' 次生成；读取失败 ' + native.failedFiles + '，异常记录 ' + native.invalidRows + '，未解析旧文件 ' + native.legacyFiles + '。订阅额度百分比不能直接换算为费用；原生模型单价映射尚未逐项核价。') : 'Antigravity 原生统计状态尚未获取。';
     var rowsHtml = (Array.isArray(u.byProvider) ? u.byProvider : []).map(function (r) {
       var share = u.totalTokens > 0 ? Math.min(100, (r.totalTokens / u.totalTokens) * 100) : 0;
       var models = Array.isArray(r.topModels) ? r.topModels.slice(0, 2).map(function (m) { return m.name + ' ' + fmtTok(m.tokens); }).join(' · ') : '';
       var isSub = r.billingMode === 'subscription';
       var badgeCls = isSub ? 'is-sub' : 'is-payg';
-      var badgeTxt = isSub ? '订阅抵扣' : (r.paygSource === 'api_billed' ? '按量实扣' : '按量估算');
-      var costPrimary = isSub
-        ? ('¥0 <span class="ws-qu-subval">(等值 $' + Number(r.apiValueUsd || 0).toFixed(2) + ' / ¥' + Number(r.apiValueCny || 0).toFixed(0) + ')</span>')
+      var badgeTxt = isSub ? '订阅调用' : (r.paygSource === 'api_billed' ? '按量实扣' : '按量估算');
+      var costPrimary = r.unpricedTokens > 0
+        ? '金额待核价 <span class="ws-qu-subval">（已补齐日志 Token，单价未核实）</span>'
+        : isSub
+        ? ('订阅 <span class="ws-qu-subval">(参考 $' + Number(r.apiValueUsd || 0).toFixed(2) + ' / ¥' + Number(r.apiValueCny || 0).toFixed(0) + ')</span>')
         : ('<strong>$' + Number(r.paygSpentUsd || 0).toFixed(2) + '</strong> <span class="ws-qu-subval">(¥' + Number(r.paygSpentCny || 0).toFixed(1) + ')</span>');
       return (
         '<div class="ws-qu-row">' +
@@ -409,14 +413,15 @@
     qUsage.hidden = false;
     qUsage.innerHTML =
       '<div class="ws-qu-head">' +
-        '<div class="ws-qu-title">TOKENS &amp; COST <span class="ws-qu-kicker">本机实测消耗与折合总价</span></div>' +
+        '<div class="ws-qu-title">TOKENS &amp; COST <span class="ws-qu-kicker">本机日志累计 · 参考估价与实扣分列</span></div>' +
         '<div class="ws-qu-kpis">' +
-          '<div class="ws-qu-kpi"><span class="ws-qu-klbl">累计 TOKEN</span><strong class="ws-qu-kval" title="' + escHtml(Number(u.totalTokens).toLocaleString('zh-CN')) + '">' + escHtml(fmtTok(u.totalTokens)) + '</strong><span class="ws-qu-ksub">实入 ' + escHtml(fmtTok(br.inputUncached)) + ' · 缓存 ' + escHtml(fmtTok(br.cacheRead)) + ' · 输出 ' + escHtml(fmtTok(br.output)) + '</span></div>' +
-          '<div class="ws-qu-kpi"><span class="ws-qu-klbl">折合 API 总价</span><strong class="ws-qu-kval is-amber">' + escHtml(fmtUsdCny(u.apiValueUsd, u.apiValueCny)) + '</strong><span class="ws-qu-ksub">含订阅池等值免付 $' + subSavedUsd.toFixed(2) + ' (¥' + subSavedCny.toFixed(0) + ')</span></div>' +
-          '<div class="ws-qu-kpi"><span class="ws-qu-klbl">按量实费估算</span><strong class="ws-qu-kval">' + escHtml(fmtUsdCny(u.paygSpentUsd, u.paygSpentCny)) + '</strong><span class="ws-qu-ksub">DeepSeek 阶梯估算 + XPeach 实扣' + (u.xpeachBilledUsd != null ? (' $' + Number(u.xpeachBilledUsd).toFixed(2)) : '') + '</span></div>' +
+          '<div class="ws-qu-kpi"><span class="ws-qu-klbl">日志 TOKEN</span><strong class="ws-qu-kval" title="' + escHtml(Number(u.totalTokens).toLocaleString('zh-CN')) + '">' + escHtml(fmtTok(u.totalTokens)) + '</strong><span class="ws-qu-ksub">非缓存 ' + escHtml(fmtTok(br.inputUncached)) + ' · 缓存 ' + escHtml(fmtTok(br.cacheRead)) + ' · 输出 ' + escHtml(fmtTok(br.output)) + '</span></div>' +
+          '<div class="ws-qu-kpi"><span class="ws-qu-klbl">API 参考估价' + (u.unpricedTokens > 0 ? '（部分）' : '') + '</span><strong class="ws-qu-kval is-amber">' + escHtml(fmtUsdCny(u.apiValueUsd, u.apiValueCny)) + '</strong><span class="ws-qu-ksub">' + (u.unpricedTokens > 0 ? escHtml(fmtTok(u.unpricedTokens)) + ' Token 尚未核价；' : '') + '配置单价折算 · 非账单</span></div>' +
+          '<div class="ws-qu-kpi"><span class="ws-qu-klbl">接口累计实扣 · XPeach</span><strong class="ws-qu-kval">' + (confirmed == null ? '暂未获取' : ('$' + Number(confirmed).toFixed(2))) + '</strong><span class="ws-qu-ksub">另有日志按量估算 $' + estimated.toFixed(2) + ' · 不合并为实际支出</span></div>' +
         '</div>' +
       '</div>' +
       '<div class="ws-qu-list">' + rowsHtml + '</div>' +
+      '<div class="ws-qu-foot">' + escHtml(nativeStatus) + '</div>' +
       (u.methodology ? '<div class="ws-qu-foot">' + escHtml(u.methodology) + '</div>' : '');
   }
   function qChip(label, val, lvl, extraCls) {
@@ -452,7 +457,7 @@
       chipHtml.push(qChip('XP', xp.usedText, 'ok'));
     }
     if (data.usage && data.usage.totalTokens > 0) {
-      chipHtml.push(qChip('Token', fmtTok(data.usage.totalTokens) + ' · ≈$' + Number(data.usage.apiValueUsd || 0).toFixed(0) + '/¥' + Math.round(Number(data.usage.apiValueCny) || 0), 'ok', 'is-usage'));
+      chipHtml.push(qChip('Token', fmtTok(data.usage.totalTokens) + ' 日志累计', 'ok', 'is-usage'));
     }
     var nextChipsHtml = chipHtml.length ? chipHtml.join('') : '额度暂不可用';
     if (nextChipsHtml !== qLastChipsHtml) {

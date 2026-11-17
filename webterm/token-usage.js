@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { scanNativeUsage } = require('./agy-native-usage');
 
 const HOME = os.homedir();
 const DSH_PROJCACHE_DIR = path.join(HOME, '.dsh/storages/session_projcache/sessions');
@@ -108,6 +109,7 @@ function makeBucket(id, label, billingMode, billingDetail, note) {
     output: 0,
     totalTokens: 0,
     apiValueUsd: 0,
+    unpricedTokens: 0,
     sessions: 0,
     sources: new Set(),
     models: Object.create(null)
@@ -127,7 +129,8 @@ function addTokens(bucket, sourceName, modelName, priceKey, counts) {
   bucket.cacheWrite += cw;
   bucket.output += out;
   bucket.totalTokens += tot;
-  bucket.apiValueUsd += calcCostUsd(priceKey, {
+  if (priceKey === null) bucket.unpricedTokens += tot;
+  else bucket.apiValueUsd += calcCostUsd(priceKey, {
     inputUncached: iu,
     cacheRead: cr,
     cacheWrite: cw,
@@ -152,11 +155,20 @@ function classifyProvider(prov, model) {
 function scanAllLogs() {
   const buckets = {
     deepseek: makeBucket('deepseek', 'DeepSeek', 'payg', '按量计费 · 峰/谷 50% 阶梯', '含 DSH + Codex + Claude Code 全部 DeepSeek 调用'),
-    codex: makeBucket('codex', 'Codex (OpenAI)', 'subscription', 'ChatGPT Plus $20/月 抵扣 ($0 额外按量)', '读取 ~/.codex/sessions；仅计 OpenAI GPT 系列'),
-    glm: makeBucket('glm', 'GLM (Z.ai)', 'subscription', 'Coding Plan 订阅抵扣 ($0 额外按量)', '读取 DSH zai-coding-cn 日志'),
+    codex: makeBucket('codex', 'Codex (OpenAI)', 'subscription', '订阅调用日志；不代表订阅费或 API 账单', '读取 ~/.codex/sessions；仅计 OpenAI GPT 系列'),
+    glm: makeBucket('glm', 'GLM (Z.ai)', 'subscription', '订阅调用日志；参考价不代表实际支出', '读取 DSH zai-coding-cn 日志'),
     xpeach: makeBucket('xpeach', 'XPeach / Claude', 'payg', '中转按量直出（XPeach API 实扣为准）', '本地仅留近端会话；实扣金额同步自 XPeach 余额接口'),
-    agy: makeBucket('agy', 'Antigravity', 'subscription', 'Google AI Pro 订阅 · 仅计 DSH 路由', '原生 CLI 为二进制 .pb 未暴露 Token，仅统计经 DSH 调用量')
+    agy: makeBucket('agy', 'Antigravity', 'subscription', 'Google AI Pro 订阅 · 原生调用日志；非额外账单', '原生 SQLite gen_metadata；原生模型金额待核价；DSH agy-bridge 同源调用不重复叠加')
   };
+
+  const native = scanNativeUsage();
+  const nativeSessions = new Set();
+  for (const r of native.records) {
+    addTokens(buckets.agy, 'Antigravity 原生', r.model, null, r);
+    nativeSessions.add(r.session);
+  }
+  buckets.agy.sessions = nativeSessions.size;
+  buckets.agy.nativeCoverage = { files: native.files, generations: native.records.length, failedFiles: native.failedFiles || 0, invalidRows: native.invalidRows || 0, legacyFiles: native.legacyFiles || 0, complete: !(native.failedFiles || native.invalidRows || native.legacyFiles) };
 
   // 1. DSH session_projcache
   const dshFiles = listFilesRecursive(DSH_PROJCACHE_DIR, '.json');
@@ -178,6 +190,8 @@ function scanAllLogs() {
       for (const [model, slots] of Object.entries(models)) {
         if (!slots || typeof slots !== 'object') continue;
         const group = classifyProvider(prov, model);
+        // agy-bridge invokes native agy: its DSH totals describe the same calls.
+        if (group === 'agy' && native.records.length > 0) continue;
         const bucket = buckets[group];
         for (const band of ['peak', 'off']) {
           const b = slots[band];
@@ -200,51 +214,37 @@ function scanAllLogs() {
     for (const g of touched) buckets[g].sessions += 1;
   }
 
-  // 2. Codex CLI ~/.codex/sessions/**/*.jsonl (exact final total_token_usage per file)
-  const codexFiles = listFilesRecursive(CODEX_SESSIONS_DIR, '.jsonl');
-  for (const file of codexFiles) {
+  // Codex counters are cumulative. Attribute only new tokens at each event.
+  for (const file of listFilesRecursive(CODEX_SESSIONS_DIR, '.jsonl')) {
     let raw;
-    try {
-      raw = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
+    try { raw = fs.readFileSync(file, 'utf8'); } catch { continue; }
     let model = 'gpt-6.1-sol';
-    let lastTs = null;
-    let lastTot = null;
+    let previous = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
+    const touched = new Set();
     for (const line of raw.split('\n')) {
-      if (!line) continue;
       let d;
-      try {
-        d = JSON.parse(line);
-      } catch {
-        continue;
+      try { d = JSON.parse(line); } catch { continue; }
+      if (d.type === 'turn_context' && d.payload && d.payload.model) model = d.payload.model;
+      if (d.type !== 'event_msg' || !d.payload || d.payload.type !== 'token_count') continue;
+      const total = d.payload.info && d.payload.info.total_token_usage;
+      if (!total) continue;
+      const delta = {};
+      for (const k of Object.keys(previous)) {
+        const current = Math.max(0, Number(total[k]) || 0);
+        delta[k] = Math.max(0, current - previous[k]);
+        previous[k] = current;
       }
-      if (d.timestamp) lastTs = d.timestamp;
-      if (d.type === 'turn_context' && d.payload && d.payload.model) {
-        model = d.payload.model;
-      } else if (d.type === 'event_msg' && d.payload && d.payload.type === 'token_count' &&
-        d.payload.info && d.payload.info.total_token_usage) {
-        lastTot = d.payload.info.total_token_usage;
-      }
+      const cached = Math.min(delta.input_tokens, delta.cached_input_tokens);
+      if (delta.input_tokens + delta.output_tokens <= 0) continue;
+      const group = classifyProvider('codex', model);
+      const band = group === 'deepseek' && isDeepSeekPeak(d.timestamp) ? 'peak' : 'off';
+      addTokens(buckets[group], 'Codex', model, resolvePriceKey(group, model, band), {
+        inputUncached: delta.input_tokens - cached,
+        cacheRead: cached, cacheWrite: 0, output: delta.output_tokens
+      });
+      touched.add(group);
     }
-    if (!lastTot) continue;
-    const inpAll = Number(lastTot.input_tokens) || 0;
-    const cached = Number(lastTot.cached_input_tokens) || 0;
-    const uncached = Math.max(0, inpAll - cached);
-    const out = Number(lastTot.output_tokens) || 0;
-    if (uncached + cached + out <= 0) continue;
-
-    const group = classifyProvider('codex', model);
-    const band = group === 'deepseek' && isDeepSeekPeak(lastTs) ? 'peak' : 'off';
-    const bucket = buckets[group];
-    addTokens(bucket, 'Codex', model, resolvePriceKey(group, model, band), {
-      inputUncached: uncached,
-      cacheRead: cached,
-      cacheWrite: 0,
-      output: out
-    });
-    bucket.sessions += 1;
+    for (const group of touched) buckets[group].sessions += 1;
   }
 
   // 3. Claude Code CLI ~/.claude/projects/**/*.jsonl (deduplicated by message.id / uuid)
@@ -323,7 +323,7 @@ function finalizeUsage(buckets, providers) {
   let totalApiValueUsd = 0;
   let totalPaygSpentUsd = 0;
 
-  const order = ['deepseek', 'codex', 'glm', 'xpeach', 'agy'];
+  const order = ['agy', 'deepseek', 'codex', 'glm', 'xpeach'];
   const byProvider = order.map((id) => {
     const b = buckets[id];
     const apiListUsd = b.apiValueUsd;
@@ -337,9 +337,7 @@ function finalizeUsage(buckets, providers) {
       paygSource = 'estimated_peak_off';
     }
 
-    const effectiveApiValueUsd = id === 'xpeach' && xpeachBilledUsd !== null
-      ? Math.max(apiListUsd, xpeachBilledUsd)
-      : apiListUsd;
+    const effectiveApiValueUsd = apiListUsd; // Reference value and account billing have different scopes.
 
     totalTokens += b.totalTokens;
     totalInputUncached += b.inputUncached;
@@ -361,6 +359,7 @@ function finalizeUsage(buckets, providers) {
       billingDetail: b.billingDetail,
       note: b.note,
       totalTokens: b.totalTokens,
+      unpricedTokens: b.unpricedTokens,
       inputUncached: b.inputUncached,
       cacheRead: b.cacheRead,
       cacheWrite: b.cacheWrite,
@@ -368,7 +367,7 @@ function finalizeUsage(buckets, providers) {
       sessions: b.sessions,
       sources: Array.from(b.sources),
       topModels,
-      apiValueUsd: Number(effectiveApiValueUsd.toFixed(2)),
+      apiValueUsd: b.unpricedTokens === b.totalTokens && b.totalTokens > 0 ? null : Number(effectiveApiValueUsd.toFixed(2)),
       apiValueCny: Number((effectiveApiValueUsd * USD_TO_CNY).toFixed(2)),
       paygSpentUsd: Number(paygUsd.toFixed(2)),
       paygSpentCny: Number((paygUsd * USD_TO_CNY).toFixed(2)),
@@ -380,6 +379,7 @@ function finalizeUsage(buckets, providers) {
     scannedAt: new Date(cachedAt || Date.now()).toISOString(),
     fxUsdToCny: USD_TO_CNY,
     totalTokens,
+    unpricedTokens: byProvider.reduce((n, p) => n + p.unpricedTokens, 0),
     breakdown: {
       inputUncached: totalInputUncached,
       cacheRead: totalCacheRead,
@@ -392,8 +392,11 @@ function finalizeUsage(buckets, providers) {
     paygSpentCny: Number((totalPaygSpentUsd * USD_TO_CNY).toFixed(2)),
     deepseekRemainingCny: dsRemainingCny !== null ? Number(dsRemainingCny.toFixed(2)) : null,
     xpeachBilledUsd: xpeachBilledUsd !== null ? Number(xpeachBilledUsd.toFixed(2)) : null,
+    nativeAntigravity: buckets.agy.nativeCoverage,
+    confirmedBilledUsd: xpeachBilledUsd,
+    estimatedPaygUsd: Number(byProvider.filter(p => p.billingMode === 'payg' && p.paygSource !== 'api_billed').reduce((n, p) => n + p.paygSpentUsd, 0).toFixed(2)),
     byProvider,
-    methodology: 'Token 统计自本机 DSH / Codex / Claude Code 日志（未含 Antigravity 二进制 .pb）；DeepSeek 按官方峰/谷阶梯价估算，XPeach 取实时接口实扣，Codex/GLM/Antigravity 为订阅抵扣折算官方参考牌价（1 USD ≈ 7.25 CNY）'
+    methodology: 'Token 统计自本机 DSH / Codex / Claude Code / Antigravity 原生数据库；DSH 的 agy-bridge 调用与原生同源，不重复叠加；日志累计含重复发送的上下文与缓存输入，不是新增文字量；DeepSeek 按峰/谷参考价估算（未校正历史价格与法定节假日），XPeach 为接口累计实扣，两者范围可能不同；订阅模型按配置参考价折算，不是账单或节省金额；固定换算 1 USD = 7.25 CNY，非实时汇率'
   };
 }
 

@@ -104,7 +104,7 @@ if (!$preview && !sf_ws_authorized()) {
 
 
 $codeUrl = (string) ($secret['code_url'] ?? 'https://dsh.stillfloating.top/code/');
-$lan = 'http://100.110.77.111';
+$lan = 'http://192.168.8.120';
 
 // 增删就改这里：一间舱 = 一组，一行 = 一个入口。id 要和 bay.svg 里的 data-zone 对上。
 $groups = [
@@ -486,7 +486,7 @@ $totalGroups = count($groups);
   </div>
 </div>
 
-<script src="/workspace/ws.js?v=15"></script>
+<script src="/workspace/ws.js?v=17"></script>
 </body>
 </html>
 

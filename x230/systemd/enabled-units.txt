@@ -29,7 +29,6 @@ hk-direct-route.service
 netdata.service
 NetworkManager-dispatcher.service
 NetworkManager.service
-ntfy.service
 paccache.timer
 phone-upload.service
 photos-sync.timer
