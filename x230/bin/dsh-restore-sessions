@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# dsh-restore-sessions — 恢复被归档的会话 + 修悬空的 defaultWorkspaceId。
+#
+# 为什么要 stop→改→start：
+#   dsh-web 把 workspace.json 缓存在内存里，运行中直接改文件会被内存里的旧状态覆盖；
+#   先停服务再改，启动时才会读到新状态。
+#
+# 用法：sudo /usr/local/bin/dsh-restore-sessions
+#       （必须脱离当前会话执行，否则会把自己杀掉：用 systemd-run）
+set -uo pipefail
+
+W=/home/zts/.dsh/storages/workspace.json
+BACKUP_DIR=/home/zts/agent-share/工作产出/05-备份归档/$(date +%Y%m%d)
+LOG=/var/log/dsh-restore-sessions.log
+URL=http://100.110.77.111:3080
+
+mkdir -p "$BACKUP_DIR"
+log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }
+
+log "=== restore start ==="
+cp -f "$W" "$BACKUP_DIR/workspace.json.before-restore-$(date +%Y%m%d-%H%M%S)" 2>/dev/null && log "backup ok"
+
+log "stopping dsh-web"
+systemctl stop dsh-web
+for _ in $(seq 1 30); do systemctl is-active --quiet dsh-web || break; sleep 1; done
+
+log "patching workspace.json"
+python3 - "$W" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+g = d.setdefault("global", {})
+arch = g.get("archivedSessionIds", [])
+log = []
+for sid in arch:
+    log.append("unarchive " + sid)
+g["archivedSessionIds"] = []
+
+# 悬空 defaultWorkspaceId → 指到「咨询」
+tbl = d.get("tables", {}).get("workspaces", {})
+cur = g.get("defaultWorkspaceId")
+if cur not in tbl:
+    for wid, ws in tbl.items():
+        if (ws.get("path") or "").endswith("/agent_misson/\u54a8\u8be2"):
+            g["defaultWorkspaceId"] = wid
+            log.append("defaultWorkspaceId %s -> %s (咨询)" % (cur, wid))
+            break
+
+tmp = p + ".tmp"
+with open(tmp, "w") as fh:
+    json.dump(d, fh, ensure_ascii=False, indent=2)
+os.replace(tmp, p)
+print("\n".join(log) if log else "no change")
+PY
+
+chown zts:zts "$W" 2>/dev/null
+chmod 600 "$W" 2>/dev/null
+
+log "starting dsh-web"
+systemctl start dsh-web
+code=000
+for attempt in 1 2 3; do
+  for _ in $(seq 1 30); do
+    code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$URL/" 2>/dev/null || echo 000)
+    case "$code" in 401|200|302) break ;; esac
+    sleep 2
+  done
+  case "$code" in 401|200|302) break ;; esac
+  log "attempt $attempt unhealthy (http=$code), retrying start"
+  systemctl start dsh-web
+done
+log "health=$code"
+
+python3 - "$W" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+g = d.get("global", {})
+t = d.get("tables", {}).get("workspaces", {})
+print("workspaces=%d sessions=%d archived=%d default=%s" % (
+    len(t), sum(len(x.get("sessionIds", [])) for x in t.values()),
+    len(g.get("archivedSessionIds", [])), g.get("defaultWorkspaceId") in t))
+PY
+log "=== restore done (http=$code) ==="

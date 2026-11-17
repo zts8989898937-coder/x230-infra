@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly refresh of DSH public nginx cookie
+
+[Timer]
+OnCalendar=Mon 05:30
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

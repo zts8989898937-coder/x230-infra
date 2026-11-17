@@ -1,0 +1,156 @@
+#!/usr/bin/env node
+// cdp — 驱动一个常驻 headless Chromium（交互式浏览/登录用）
+// 与 browse 的分工：browse 是一次性截图；cdp 是「浏览器活着几分钟」时用。
+//
+//   cdp start [url]      启动浏览器（profile 持久化，登录态保留）
+//   cdp goto <url>       导航并等加载完成
+//   cdp eval <js>        执行 JS，打印返回值
+//   cdp shot [out.png]   截图（默认 ~/browse-shots/cdp-<时间>.png）
+//   cdp stop             关闭浏览器
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawn } from 'node:child_process';
+
+const HOME = os.homedir();
+const PORT = 9222;
+const PROFILE = path.join(HOME, '.dsh', 'browser-profile');
+const SHOTS = path.join(HOME, 'browse-shots');
+const PIDFILE = path.join(HOME, '.local', 'state', 'browse', 'cdp.pid');
+const [cmd, ...args] = process.argv.slice(2);
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const die = (m) => { console.error(m); process.exit(1); };
+
+async function listTargets() {
+  const r = await fetch(`http://127.0.0.1:${PORT}/json/list`).catch(() => null);
+  if (!r || !r.ok) return null;
+  return r.json();
+}
+async function pageTarget() {
+  const l = await listTargets();
+  if (!l) return null;
+  return l.find(t => t.type === 'page');
+}
+async function connect() {
+  const t = await pageTarget();
+  if (!t) die('浏览器没在跑：先 cdp start');
+  const ws = new WebSocket(t.webSocketDebuggerUrl);
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  let id = 0;
+  const send = (method, params = {}) => new Promise((res, rej) => {
+    const n = ++id;
+    const h = (ev) => {
+      const m = JSON.parse(ev.data);
+      if (m.id !== n) return;
+      ws.removeEventListener('message', h);
+      m.error ? rej(new Error(JSON.stringify(m.error))) : res(m.result);
+    };
+    ws.addEventListener('message', h);
+    ws.send(JSON.stringify({ id: n, method, params }));
+  });
+  return { ws, send };
+}
+
+if (cmd === 'start') {
+  const url = args[0] || 'about:blank';
+  fs.mkdirSync(path.dirname(PIDFILE), { recursive: true });
+  fs.mkdirSync(PROFILE, { recursive: true });
+  const child = spawn('/usr/bin/chromium', [
+    '--headless=new', '--no-first-run', '--no-default-browser-check',
+    '--hide-scrollbars', '--disable-background-networking',
+    `--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`,
+    '--window-size=1440,900', url,
+  ], { detached: true, stdio: 'ignore' });
+  child.unref();
+  fs.writeFileSync(PIDFILE, String(child.pid));
+  for (let i = 0; i < 40; i++) {
+    await sleep(250);
+    if (await pageTarget()) { console.log(`started pid=${child.pid} port=${PORT} url=${url}`); process.exit(0); }
+  }
+  die('启动超时');
+}
+
+if (cmd === 'stop') {
+  try {
+    const pid = Number(fs.readFileSync(PIDFILE, 'utf8').trim());
+    process.kill(-pid, 'SIGTERM');
+  } catch {}
+  try { process.kill(Number(fs.readFileSync(PIDFILE, 'utf8')), 'SIGTERM'); } catch {}
+  fs.rmSync(PIDFILE, { force: true });
+  console.log('stopped');
+  process.exit(0);
+}
+
+if (cmd === 'goto') {
+  const { ws, send } = await connect();
+  await send('Page.navigate', { url: args[0] });
+  for (let i = 0; i < 60; i++) {
+    await sleep(250);
+    try {
+      const r = await send('Runtime.evaluate', { expression: 'document.readyState', returnByValue: true });
+      if (r.result?.value === 'complete') break;
+    } catch {}
+  }
+  await sleep(1200);
+  const r = await send('Runtime.evaluate', { expression: 'location.href + " | " + document.title', returnByValue: true });
+  console.log(r.result?.value ?? '');
+  ws.close();
+  process.exit(0);
+}
+
+if (cmd === 'eval') {
+  const { ws, send } = await connect();
+  const r = await send('Runtime.evaluate', {
+    expression: args.join(' '), returnByValue: true, awaitPromise: true,
+  });
+  const v = r.result?.value;
+  console.log(typeof v === 'string' ? v : JSON.stringify(v, null, 0));
+  if (r.exceptionDetails) console.error('JS 异常:', JSON.stringify(r.exceptionDetails).slice(0, 300));
+  ws.close();
+  process.exit(0);
+}
+
+if (cmd === 'type') {
+  const text = args[0];
+  const sel = args[1];
+  const { ws, send } = await connect();
+  if (sel) {
+    await send('Runtime.evaluate', { expression: `document.querySelector(${JSON.stringify(sel)}).focus()` });
+  }
+  await send('Input.insertText', { text });
+  await sleep(300);
+  const v = await send('Runtime.evaluate', { expression: 'document.activeElement && document.activeElement.value', returnByValue: true });
+  console.log(JSON.stringify({ typed: text, value: v.result?.value }));
+  ws.close();
+  process.exit(0);
+}
+
+if (cmd === 'click') {
+  const x = Number(args[0]), y = Number(args[1]);
+  const { ws, send } = await connect();
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+  console.log(`clicked ${x},${y}`);
+  ws.close();
+  process.exit(0);
+}
+
+if (cmd === 'shot') {
+  const { ws, send } = await connect();
+  const out = args[0] || path.join(SHOTS, `cdp-${new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14)}.png`);
+  const scale = Number(args[1] || 1);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  if (scale > 1) {
+    await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: scale, mobile: false });
+    await sleep(600);
+  }
+  const r = await send('Page.captureScreenshot', { format: 'png' });
+  fs.writeFileSync(out, Buffer.from(r.data, 'base64'));
+  console.log(out);
+  ws.close();
+  process.exit(0);
+}
+
+console.error(fs.readFileSync(process.argv[1], 'utf8').split('\n').slice(1, 10).join('\n').replace(/^\/\/ /gm, ''));
+process.exit(2);

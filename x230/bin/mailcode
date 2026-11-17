@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""
+mailcode — 从 QQ 邮箱读取最新验证码（IMAP 直连，秒级）
+
+用法:
+  mailcode                    最新一封含验证码的邮件
+  mailcode 雨云                按关键词过滤（发件人/主题/正文）
+  mailcode --last 5           最近 5 条验证码
+  mailcode --json             机器可读输出
+  mailcode --wait 60          最多等 60 秒，出现新验证码即输出（登录流程用）
+
+凭据: ~/.config/secrets/qqmail.imap （QQ邮箱 IMAP 授权码，权限 600）
+"""
+import sys, os, re, json, time, imaplib, email
+from email.header import decode_header
+
+ADDR = 'a811824@qq.com'
+CRED = os.path.expanduser('~/.config/secrets/qqmail.imap')
+HOST, PORT = 'imap.qq.com', 993
+
+CODE_RE = re.compile(r'(?:验证码|校验码|动态码|确认码|verification\s*code|code)[^0-9]{0,40}(\d{4,8})', re.I)
+ANY_NUM = re.compile(r'(?<!\d)(\d{4,8})(?!\d)')
+
+def dec(s):
+    if not s: return ''
+    out = []
+    for part, enc in decode_header(s):
+        if isinstance(part, bytes):
+            try: out.append(part.decode(enc or 'utf-8', 'ignore'))
+            except Exception: out.append(part.decode('utf-8', 'ignore'))
+        else: out.append(part)
+    return ''.join(out)
+
+def plain(msg, limit=6000):
+    chunks = []
+    for p in msg.walk():
+        if p.get_content_maintype() == 'multipart': continue
+        if p.get_content_type() not in ('text/plain', 'text/html'): continue
+        try: payload = p.get_payload(decode=True) or b''
+        except Exception: continue
+        cs = p.get_content_charset() or 'utf-8'
+        try: t = payload.decode(cs, 'ignore')
+        except Exception: t = payload.decode('utf-8', 'ignore')
+        chunks.append(t)
+    t = '\n'.join(chunks)
+    t = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', t)
+    t = re.sub(r'<[^>]+>', ' ', t)
+    t = t.replace('&nbsp;', ' ').replace('&amp;', '&')
+    return re.sub(r'[ \t\r\f\v]+', ' ', t)[:limit]
+
+def extract(text):
+    m = CODE_RE.search(text)
+    if m: return m.group(1)
+    for cand in ANY_NUM.findall(text):
+        if re.fullmatch(r'(19|20)\d{2}', cand): continue
+        return cand
+    return None
+
+def connect():
+    M = imaplib.IMAP4_SSL(HOST, PORT)
+    M.login(ADDR, open(CRED).read().strip())
+    M.select('INBOX')
+    return M
+
+def headers(M, start, stop):
+    typ, d = M.fetch(f'{start}:{stop}', '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+    out = []
+    if typ != 'OK': return out
+    for part in d:
+        if not isinstance(part, tuple): continue
+        meta, raw = part
+        uid = meta.split(b' ')[0]
+        h = email.message_from_bytes(raw)
+        out.append({'uid': uid.decode() if isinstance(uid, bytes) else str(uid), 'from': dec(h.get('From')), 'subject': dec(h.get('Subject')), 'date': h.get('Date', '')})
+    return out
+
+def body_code(M, uid):
+    typ, d = M.fetch(uid, '(RFC822)')
+    if typ != 'OK' or not d or not d[0]: return None
+    msg = email.message_from_bytes(d[0][1])
+    head = dec(msg.get('Subject', ''))
+    return extract(head + '\n' + plain(msg))
+
+def scan(M, kw, want, limit=15, min_uid=0):
+    typ, data = M.search(None, 'ALL')
+    ids = data[0].split()
+    if not ids: return []
+    tail = ids[-limit:]
+    hs = headers(M, tail[0].decode(), tail[-1].decode())
+    hs = [h for h in hs if int(h['uid']) > min_uid]
+    if kw:
+        k = kw.lower()
+        hs = [h for h in hs if k in (h['from'] + h['subject']).lower()]
+    hits = []
+    for h in reversed(hs):
+        c = body_code(M, h['uid'])
+        if c:
+            hits.append({**h, 'code': c})
+            if len(hits) >= want: break
+        if len(hits) == 0 and kw:
+            # 主题/发件人没命中关键词时，再退一步查正文
+            pass
+    return hits
+
+def show(items, as_json=False):
+    if as_json:
+        print(json.dumps(items, ensure_ascii=False, indent=2)); return
+    for it in items:
+        print(f"{it['code']}  {it['subject'][:44]}")
+        print(f"    {it['from'][:58]}  ·  {str(it['date'])[:25]}")
+
+def main():
+    args = sys.argv[1:]
+    kw = None; last = 1; as_json = False; wait = 0
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--last': last = int(args[i+1]); i += 2
+        elif a == '--json': as_json = True; i += 1
+        elif a == '--wait': wait = int(args[i+1]); i += 2
+        elif a in ('-h', '--help'): print(__doc__); return
+        else: kw = a; i += 1
+    deadline = time.time() + wait
+    baseline = 0
+    if wait > 0:
+        M0 = connect()
+        try:
+            typ, data = M0.search(None, 'ALL')
+            if data and data[0]: baseline = int(data[0].split()[-1])
+        finally:
+            try: M0.logout()
+            except Exception: pass
+    while True:
+        M = connect()
+        try: hits = scan(M, kw, last, min_uid=baseline)
+        finally:
+            try: M.logout()
+            except Exception: pass
+        if hits:
+            show(hits, as_json); return
+        if time.time() >= deadline:
+            print('没有找到验证码邮件' + (f'（关键词: {kw}）' if kw else ''), file=sys.stderr)
+            sys.exit(1)
+        time.sleep(4)
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# 在 dsh-context 的客户端 bundle 末尾追加「按模型消耗」卡片；npm 升级覆盖后可重跑。
+set -euo pipefail
+quiet=0
+[ "${1:-}" = "--quiet" ] && quiet=1
+target=/home/zts/.dsh/profiles/web/node_modules/dsh-context/lib/client.js
+snippet=/usr/local/share/dsh-context-model-card.js
+marker='dsh-model-usage-card'
+[ -f "$target" ] || exit 0
+[ -f "$snippet" ] || { echo "missing snippet: $snippet" >&2; exit 1; }
+if grep -q "$marker" "$target"; then
+  [ "$quiet" = 1 ] || echo "already patched: $target"
+  exit 0
+fi
+ts=$(date +%Y%m%d-%H%M%S)
+cp -a "$target" "$target.pre-model-card-$ts"
+tmp="$target.dsh-model-card.tmp"
+cp -a "$target" "$tmp"
+cat "$snippet" >> "$tmp"
+node --check "$tmp"
+mv "$tmp" "$target"
+[ "$quiet" = 1 ] || echo "patched: $target (backup $target.pre-model-card-$ts)"

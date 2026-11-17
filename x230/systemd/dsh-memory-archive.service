@@ -1,0 +1,11 @@
+[Unit]
+Description=DSH 记忆与会话保留策略（daily 60 天 / 会话 90 天，先归档再删）
+After=network.target
+
+[Service]
+Type=oneshot
+User=zts
+Group=zts
+ExecStart=/usr/local/bin/dsh-memory-archive
+Nice=10
+IOSchedulingClass=idle

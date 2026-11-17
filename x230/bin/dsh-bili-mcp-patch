@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""dsh-bili-mcp-patch — 给 bilibili-mcp-server 打两个本地补丁（幂等）
+
+1) 只读闸门：B站账号用户明令只读（2026-11-08）。旧状态只有模型自觉，
+   工具面里发评论/弹幕/点赞/关注/取关/删评一应俱全。补丁在注册层不挂写工具
+   （BILIBILI_READONLY=0 才放开）。
+2) refresh_token 落盘：旧代码只回给调用方、不写 Cookie 文件，重启后
+   「自动刷新已就绪」是假的。补丁让扫码/刷新都把 token 写回文件并在启动时读回。
+
+npm 升级会覆盖 dist，所以本脚本同时挂在 dsh-web 的 ExecStartPre 与看门狗里。
+用法：dsh-bili-mcp-patch [--check] [--quiet]
+"""
+import pathlib
+import sys
+
+BASE = pathlib.Path.home() / ".dsh/mcp-servers/node_modules/bilibili-mcp-server/dist"
+CHECK = "--check" in sys.argv
+QUIET = "--quiet" in sys.argv
+
+def log(msg):
+    if not QUIET:
+        print(msg, file=sys.stderr)
+
+def patch(path: pathlib.Path, marker: str, old: str, new: str, label: str) -> bool:
+    if not path.exists():
+        log(f"[bili] 缺少文件: {path}")
+        return False
+    s = path.read_text()
+    if marker in s:
+        return True
+    if old not in s:
+        log(f"[bili] {label}: 锚点未命中（上游改版？）")
+        return False
+    path.write_text(s.replace(old, new, 1))
+    log(f"[bili] {label}: 已打补丁")
+    return True
+
+READONLY_OLD = """// ─── 注册所有工具 ─────────────────────────────────────────
+registerCommentTools(server);"""
+READONLY_NEW = """// ─── 只读闸门（X230 本地补丁，2026-11-09）──────────────────
+// 用户明令（2026-11-08）：此账号只读，不得代发评论/弹幕、点赞、关注/取关、删评。
+// 在注册层直接不挂写工具：工具不存在 → 模型无从调用。
+// 放开写操作必须显式 export BILIBILI_READONLY=0。
+const READONLY = process.env.BILIBILI_READONLY !== '0';
+const WRITE_TOOLS = new Set([
+    'bilibili_reply',
+    'bilibili_delete_comment',
+    'bilibili_like_comment',
+    'bilibili_send_danmaku',
+    'bilibili_user_follow',
+    'bilibili_user_unfollow',
+]);
+if (READONLY) {
+    const _registerTool = server.registerTool.bind(server);
+    server.registerTool = (name, def, handler) => (WRITE_TOOLS.has(name) ? server : _registerTool(name, def, handler));
+    console.error(`[bilibili-mcp] 🔒 READ-ONLY：屏蔽 ${WRITE_TOOLS.size} 个写操作工具（BILIBILI_READONLY=0 可放开）`);
+}
+// ─── 注册所有工具 ─────────────────────────────────────────
+registerCommentTools(server);"""
+
+TOKEN_CFG_OLD = """            config.dede_user_id ||= fileData.dede_user_id;"""
+TOKEN_CFG_NEW = """            config.dede_user_id ||= fileData.dede_user_id;
+            config.refreshToken ||= fileData.refresh_token;"""
+
+TOKEN_UPDATE_OLD = """    if (data.dede_user_id)
+        config.dede_user_id = data.dede_user_id;
+    // 重置缓存"""
+TOKEN_UPDATE_NEW = """    if (data.dede_user_id)
+        config.dede_user_id = data.dede_user_id;
+    if (data.refresh_token)
+        config.refreshToken = data.refresh_token;
+    // 重置缓存"""
+
+TOKEN_SAVE_OLD = """        dede_user_id: config.dede_user_id,
+        lastRefresh: data.lastRefresh || Date.now(),
+    });"""
+TOKEN_SAVE_NEW = """        dede_user_id: config.dede_user_id,
+        refresh_token: config.refreshToken,
+        lastRefresh: data.lastRefresh || Date.now(),
+    });"""
+
+TOKEN_LOGIN_OLD = """                updateCookie({
+                    sessdata,
+                    bili_jct,
+                    dede_user_id,
+                    lastRefresh: Date.now(),
+                });"""
+TOKEN_LOGIN_NEW = """                updateCookie({
+                    sessdata,
+                    bili_jct,
+                    dede_user_id,
+                    refresh_token: data.refresh_token,
+                    lastRefresh: Date.now(),
+                });"""
+
+TOKEN_REFRESH_OLD = """    if (newDedeUserId)
+        updatedData.dede_user_id = newDedeUserId;
+    updateCookie(updatedData);"""
+TOKEN_REFRESH_NEW = """    if (newDedeUserId)
+        updatedData.dede_user_id = newDedeUserId;
+    if (newRefreshToken)
+        updatedData.refresh_token = newRefreshToken;
+    updateCookie(updatedData);"""
+
+if not BASE.exists():
+    log(f"[bili] 未安装 bilibili-mcp-server（{BASE} 不存在），跳过")
+    sys.exit(0)
+
+if CHECK:
+    checks = [
+        (BASE / "index.js", "BILIBILI_READONLY"),
+        (BASE / "config.js", "fileData.refresh_token"),
+        (BASE / "api/login.js", "refresh_token: data.refresh_token"),
+        (BASE / "api/cookie.js", "updatedData.refresh_token = newRefreshToken"),
+    ]
+    missing = [p.name for p, m in checks if not (p.exists() and m in p.read_text())]
+    if missing:
+        print("MISSING: " + ",".join(missing), file=sys.stderr)
+        sys.exit(1)
+    sys.exit(0)
+
+ok = all([
+    patch(BASE / "index.js", "BILIBILI_READONLY", READONLY_OLD, READONLY_NEW, "只读闸门"),
+    patch(BASE / "config.js", "fileData.refresh_token", TOKEN_CFG_OLD, TOKEN_CFG_NEW, "读回 refresh_token"),
+    patch(BASE / "config.js", "data.refresh_token", TOKEN_UPDATE_OLD, TOKEN_UPDATE_NEW, "更新时保存"),
+    patch(BASE / "config.js", "refresh_token: config.refreshToken", TOKEN_SAVE_OLD, TOKEN_SAVE_NEW, "写文件"),
+    patch(BASE / "api/login.js", "refresh_token: data.refresh_token", TOKEN_LOGIN_OLD, TOKEN_LOGIN_NEW, "扫码登录落盘"),
+    patch(BASE / "api/cookie.js", "updatedData.refresh_token = newRefreshToken", TOKEN_REFRESH_OLD, TOKEN_REFRESH_NEW, "刷新落盘"),
+])
+sys.exit(0 if ok else 1)

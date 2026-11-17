@@ -1,0 +1,12 @@
+[Unit]
+Description=X230 fan curve
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/x230-fan.sh
+Restart=always
+RestartSec=5
+ExecStopPost=/bin/sh -c 'echo level auto > /proc/acpi/ibm/fan 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Reverse SSH tunnel HK 18013 to X230 webterm :3902
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=zts
+ExecStart=/usr/bin/ssh -CNT -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes -o ConnectTimeout=10 -R 127.0.0.1:18013:127.0.0.1:3902 hk
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

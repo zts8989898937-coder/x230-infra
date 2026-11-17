@@ -1,0 +1,14 @@
+[Unit]
+Description=DeepSeek Harness Web UI (tailscale only)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/home/zts/.config/deepseek.env
+User=zts
+ExecStart=/usr/bin/dsh web --host 100.110.77.111 --port 3080 --no-open --trusted-host 192.168.8.120:3082
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

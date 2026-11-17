@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# dsh-nightly-roll — 每日 04:00 滚包入口（由 dsh-nightly-roll.timer 调用）
+#
+# 2026-11-08 v3：核心逻辑移到 dsh-nightly-roll-core，滚包结束后自动跑
+# dsh-roll-ai-review 做 AI 审查（模型降级链 + 飞书告警 + 可选自动回滚）。
+#
+# 开关：
+#   /etc/dsh-roll-ai-review.conf 里 AI_REVIEW=0     —— 关闭 AI 审查
+#   /etc/dsh-roll-ai-review.off                      —— 临时关闭（touch 即生效）
+#   参数 --dry-run                                   —— 核心不重启，审查也不推送
+set -uo pipefail
+
+LOG="/var/log/dsh-nightly-roll.log"
+CORE="/usr/local/bin/dsh-nightly-roll-core"
+REVIEW="/usr/local/bin/dsh-roll-ai-review"
+CONF="/etc/dsh-roll-ai-review.conf"
+OFF="/etc/dsh-roll-ai-review.off"
+
+log() { echo "[$(date '+%F %T')] $*" >>"$LOG"; }
+
+DRY=0
+for a in "$@"; do [ "$a" = "--dry-run" ] && DRY=1; done
+
+AI_ON=1
+[ -f "$OFF" ] && AI_ON=0
+if [ -f "$CONF" ] && grep -qE '^[[:space:]]*AI_REVIEW[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$CONF"; then
+  AI_ON=0
+fi
+
+SINCE=$(date '+%F %T')
+
+# 跳过某一天：/etc/dsh-nightly-roll.skip 里写日期（YYYYMMDD 或 YYYY-MM-DD）。
+# 只跳过文件里写的这一天；日期过期后自动删掉、恢复正常滚包。
+SKIP_FILE="${DSH_ROLL_SKIP_FILE:-/etc/dsh-nightly-roll.skip}"
+if [ -f "$SKIP_FILE" ]; then
+  SKIP_DATE=$(tr -d '[:space:]' < "$SKIP_FILE" 2>/dev/null || true)
+  TODAY_NUM=$(date +%Y%m%d)
+  if [ -z "$SKIP_DATE" ] || [ "$SKIP_DATE" = "$TODAY_NUM" ] || [ "$SKIP_DATE" = "$(date +%F)" ]; then
+    log "skip requested for today ($SKIP_DATE) — no roll, AI review skipped"
+    exit 0
+  fi
+  log "stale skip file ($SKIP_DATE != $TODAY_NUM) — removing and continuing"
+  rm -f "$SKIP_FILE"
+fi
+
+log "nightly roll wrapper start (since=$SINCE dry_run=$DRY ai=$AI_ON)"
+
+DSH_ROLL_FROM_WRAPPER=1 "$CORE" "$@"
+RC=$?
+log "core rc=$RC"
+
+if [ "$AI_ON" = 1 ] && [ -x "$REVIEW" ]; then
+  REVIEW_ARGS=(--roll-rc "$RC" --since "$SINCE")
+  if [ "$DRY" = 1 ]; then
+    REVIEW_ARGS+=(--dry-run --no-notify)
+  fi
+  log "AI review start"
+  timeout 330 "$REVIEW" "${REVIEW_ARGS[@]}"
+  RRC=$?
+  if [ "$RRC" = 124 ]; then
+    log "AI review timeout (330s)"
+  elif [ "$RRC" != 0 ]; then
+    log "AI review exited rc=$RRC"
+  else
+    log "AI review done"
+  fi
+elif [ "$AI_ON" = 0 ]; then
+  log "AI review disabled by config/flag"
+else
+  log "AI review missing: $REVIEW"
+fi
+
+exit "$RC"

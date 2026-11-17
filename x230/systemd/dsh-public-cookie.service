@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh injected DSH public cookie on HK nginx
+After=dsh-tunnel.service
+
+[Service]
+Type=oneshot
+User=zts
+Environment=HOME=/home/zts
+ExecStart=/usr/local/bin/dsh-public-cookie-refresh

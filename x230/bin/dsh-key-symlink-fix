@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# dsh-key-symlink-fix — 保证各项目目录的 KEY.md 都是指向共享 KEY 的软链
+#
+# 背景：memory-evolve 的 store.write() 用 renameSync 落盘，rename 会替换掉
+# 「软链本身」，于是最忙的项目目录会悄悄长出一份实体 KEY，和共享 KEY 分叉。
+# 2026-11-09 已给 store.js 打补丁（writeTarget 解析 realpath），本脚本是兜底：
+# 1) 发现实体 KEY.md → 改名 KEY.fork-<时间戳>.md 留档，再建软链（不删数据）
+# 2) 检查 store.js 补丁还在（插件是 link: 本地源，一般不会被覆盖，但要有告警）
+#
+# 用法：dsh-key-symlink-fix [--quiet] [--dry-run]
+set -uo pipefail
+QUIET=0; DRY=0
+for a in "$@"; do case "$a" in --quiet) QUIET=1;; --dry-run) DRY=1;; esac; done
+say() { [ "$QUIET" = 1 ] || echo "$@"; }
+
+ROOT="$HOME/.dsh/memories/projects"
+CANON="$ROOT/ce8898c9c2df/KEY.md"
+STORE="$HOME/.dsh/profiles/web/node_modules/dsh-memory-evolve/lib/store.js"
+
+[ -f "$CANON" ] || { say "[key-link] 共享 KEY 不存在: $CANON"; exit 1; }
+chmod 600 "$CANON" 2>/dev/null
+
+fixed=0
+for d in "$ROOT"/*/; do
+  d=${d%/}
+  k="$d/KEY.md"
+  [ -e "$k" ] || [ -L "$k" ] || continue
+  [ "$d" = "$ROOT/ce8898c9c2df" ] && continue
+  if [ -L "$k" ]; then
+    tgt=$(readlink -f "$k" 2>/dev/null || true)
+    [ "$tgt" = "$(readlink -f "$CANON")" ] || { say "[key-link] 软链指错: $k -> ${tgt:-?}"; }
+    continue
+  fi
+  # 实体文件：先把规范 KEY 里没有的条目并过去（分叉期间的写入不能丢），再留档换软链
+  ts=$(date +%Y%m%d-%H%M%S)
+  say "[key-link] $(basename "$d")/KEY.md 是实体文件（$(stat -c%s "$k") B），先合并再重建软链"
+  if [ "$DRY" = 1 ]; then fixed=$((fixed+1)); continue; fi
+  if command -v dsh-key-merge >/dev/null 2>&1; then
+    dsh-key-merge "$k" "$CANON" 2>&1 | sed 's/^/[key-link]   /' || true
+  fi
+  mv -f "$k" "$d/KEY.fork-$ts.md"
+  ln -s ../ce8898c9c2df/KEY.md "$k"
+  fixed=$((fixed+1))
+done
+
+if [ -f "$STORE" ]; then
+  grep -q "function writeTarget" "$STORE" || say "[key-link] 警告: store.js 的软链补丁不见了，写入会再次打断软链"
+fi
+say "[key-link] 完成，修复 $fixed 个"
+exit 0

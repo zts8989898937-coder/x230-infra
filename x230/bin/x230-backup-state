@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# x230-backup-state — 导出脱敏系统状态清单（官方包、AUR包、开机服务、启动项、分区表）
+set -euo pipefail
+
+OUT_DIR="${1:-/home/zts/backups/system-state}"
+mkdir -p "$OUT_DIR"
+
+pacman -Qqen | sort > "$OUT_DIR/pkglist-official.txt"
+pacman -Qqem | sort > "$OUT_DIR/pkglist-aur.txt"
+systemctl list-unit-files --state=enabled --no-pager > "$OUT_DIR/systemd-enabled.txt"
+{
+  echo "=== uname ==="
+  uname -a
+  echo "=== /boot ==="
+  ls -la /boot
+  echo "=== /boot/loader/entries/arch.conf ==="
+  cat /boot/loader/entries/arch.conf 2>/dev/null || true
+} > "$OUT_DIR/boot-state.txt"
+{
+  echo "=== /etc/fstab ==="
+  grep -v '^#' /etc/fstab | grep -v '^$' || true
+  echo "=== lsblk ==="
+  lsblk -f
+} > "$OUT_DIR/disk-layout.txt"
+
+# 记录带日期的滚包清单快照（保留最近 10 份）
+STAMP=$(date +%Y%m%d-%H%M)
+ARCH_DIR="$OUT_DIR/history"
+mkdir -p "$ARCH_DIR"
+cp -f "$OUT_DIR/pkglist-official.txt" "$ARCH_DIR/pkglist-official-$STAMP.txt"
+cp -f "$OUT_DIR/pkglist-aur.txt" "$ARCH_DIR/pkglist-aur-$STAMP.txt"
+ls -1t "$ARCH_DIR"/pkglist-official-*.txt 2>/dev/null | tail -n +11 | xargs -r rm -f
+ls -1t "$ARCH_DIR"/pkglist-aur-*.txt 2>/dev/null | tail -n +11 | xargs -r rm -f
+
+chown -R zts:zts "$OUT_DIR" 2>/dev/null || true
+echo "$OUT_DIR"

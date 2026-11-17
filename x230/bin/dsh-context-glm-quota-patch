@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# 给 dsh-context 的 host bundle 增加 /api/dsh-context/glm-quota 路由；npm 升级覆盖后重跑。
+set -euo pipefail
+quiet=0
+[ "${1:-}" = "--quiet" ] && quiet=1
+target=/home/zts/.dsh/profiles/web/node_modules/dsh-context/lib/index.js
+snippet=/usr/local/share/dsh-context-glm-quota-host.js
+[ -f "$target" ] || exit 0
+[ -f "$snippet" ] || { echo "missing snippet: $snippet" >&2; exit 1; }
+if grep -q 'dsh-context: glm quota route' "$target"; then
+  [ "$quiet" = 1 ] || echo "already patched: $target"
+  exit 0
+fi
+ts=$(date +%Y%m%d-%H%M%S)
+cp -a "$target" "$target.pre-glm-quota-$ts"
+tmp="$target.dsh-glm-quota.tmp"
+cp -a "$target" "$tmp"
+python3 - "$tmp" "$snippet" <<'PY'
+import re, sys
+target, snippet = sys.argv[1], sys.argv[2]
+s = open(target, encoding='utf-8').read()
+new = open(snippet, encoding='utf-8').read().strip()
+pat = re.compile(r'export\{[^}]*\};?\s*$')
+if not pat.search(s):
+    raise SystemExit('export tail not found')
+s = pat.sub(new + '\n', s)
+open(target, 'w', encoding='utf-8').write(s)
+PY
+node --check "$tmp"
+mv "$tmp" "$target"
+[ "$quiet" = 1 ] || echo "patched: $target (backup $target.pre-glm-quota-$ts)"

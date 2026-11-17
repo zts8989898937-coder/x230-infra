@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# clash-node-pin — 把 Clash 的「🔰节点选择」固定在指定节点（默认 日本1-VIP88）
+#
+# 为什么：Antigravity(agy) 只有在日本1（133.18.114.45）出口才能用；
+#   日本2（133.18.114.145）会报 FAILED_PRECONDITION 400 User location is not supported。
+#
+# 用法:
+#   clash-node-pin status      # 看当前组选中节点 / 固定目标 / 开关状态
+#   clash-node-pin enforce     # 由 timer 调用：不在目标节点且目标健康就切过去
+#   clash-node-pin set <节点>  # 改固定目标（持久到 /etc/clash-node-pin/config）
+#   clash-node-pin off | on    # 临时停用 / 恢复强制（用户手动切节点时用 off）
+#
+# 控制面：/run/clash-verge-service/users/1000/verge-mihomo.sock（GUI 那个 ~/.local/share 里的是旧残留）
+set -u
+SOCK=${CLASH_SOCK:-/run/clash-verge-service/users/1000/verge-mihomo.sock}
+CONF=/etc/clash-node-pin/config
+DISABLED=/etc/clash-node-pin/disabled
+LOG=/home/zts/.local/state/clash-node-pin.log
+HEALTH_URL=http://www.gstatic.com/generate_204
+
+GROUP=$(sed -n 's/^GROUP=//p' "$CONF" 2>/dev/null); GROUP=${GROUP:-🔰节点选择}
+TARGET=$(sed -n 's/^TARGET=//p' "$CONF" 2>/dev/null); TARGET=${TARGET:-🇯🇵 日本1-VIP88-0.8倍率}
+
+mkdir -p "$(dirname "$LOG")"
+log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+enc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1"; }
+api() { curl -s -m 8 --unix-socket "$SOCK" "$@"; }
+jget() { python3 -c "$1" 2>/dev/null; }
+
+current_node() {
+  api http://localhost/proxies \
+    | GROUP="$GROUP" jget 'import json,os,sys
+d=json.load(sys.stdin)["proxies"]
+g=d.get(os.environ["GROUP"])
+print(g.get("now") if g else "")'
+}
+
+cmd_status() {
+  echo "socket : $SOCK"
+  echo "组     : $GROUP"
+  echo "目标   : $TARGET"
+  echo "当前   : $(current_node)"
+  echo "强制   : $([ -f "$DISABLED" ] && echo 已停用 || echo 生效中)"
+  echo "日志   : $LOG"
+}
+
+cmd_enforce() {
+  [ -f "$DISABLED" ] && exit 0
+  local now; now=$(current_node)
+  if [ -z "$now" ]; then log "取不到 $GROUP 当前节点（Clash 没起？），跳过"; exit 0; fi
+  [ "$now" = "$TARGET" ] && exit 0
+
+  # 目标节点不健康就别硬切，保持现状（避免断网），等它恢复再切回来
+  local delay
+  delay=$(api "http://localhost/proxies/$(enc "$TARGET")/delay?timeout=4000&url=$(enc "$HEALTH_URL")" \
+          | jget 'import json,sys
+try: print(json.load(sys.stdin).get("delay",""))
+except Exception: print("")')
+  if ! [ "${delay:-}" -gt 0 ] 2>/dev/null; then
+    log "目标 $TARGET 不通（delay=${delay:-none}），保持当前 $now"
+    exit 0
+  fi
+
+  local code
+  code=$(api -o /dev/null -w '%{http_code}' -X PUT "http://localhost/proxies/$(enc "$GROUP")" \
+         -H 'Content-Type: application/json' \
+         --data-raw "{\"name\":\"$TARGET\"}")
+  if [ "$code" = "204" ]; then
+    log "已切到 $TARGET（原 $now，delay=${delay}ms）"
+  else
+    log "切换失败 http=$code（原 $now）"
+  fi
+}
+
+case "${1:-status}" in
+  status)  cmd_status ;;
+  enforce) cmd_enforce ;;
+  set)     [ $# -ge 2 ] || { echo "用法: clash-node-pin set <节点名>"; exit 2; }
+           grep -q '^TARGET=' "$CONF" 2>/dev/null && sed -i "s|^TARGET=.*|TARGET=$2|" "$CONF" || echo "TARGET=$2" >> "$CONF"
+           echo "目标已改为: $2"; cmd_enforce ;;
+  off)     touch "$DISABLED"; chmod 644 "$DISABLED"; echo "已停用强制（自己切节点去吧），恢复用 clash-node-pin on" ;;
+  on)      rm -f "$DISABLED"; echo "已恢复强制"; cmd_enforce ;;
+  *)       echo "用法: clash-node-pin status|enforce|set <节点>|off|on"; exit 2 ;;
+esac

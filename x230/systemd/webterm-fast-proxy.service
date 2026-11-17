@@ -1,0 +1,24 @@
+[Unit]
+Description=Dedicated egress for web terminal transport
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+DynamicUser=yes
+StateDirectory=webterm-fast-proxy
+StateDirectoryMode=0700
+LoadCredential=config:/home/zts/.config/secrets/webterm-fast-proxy.yaml
+ExecStart=/usr/local/lib/webterm-transport/mihomo -d /var/lib/webterm-fast-proxy -f %d/config
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

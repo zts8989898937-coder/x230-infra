@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -u
+
+mode="${1:-in}"
+src="${2:-}"
+if [ -z "$src" ] || [ ! -f "$src" ]; then
+  echo "用法: vsc-run <in|kbd|o2> <文件路径>"
+  exit 1
+fi
+
+dir="$(cd -- "$(dirname -- "$src")" && pwd)" || exit 1
+file="$(basename -- "$src")"
+ext="${file##*.}"
+stem="${file%.*}"
+cd "$dir" || exit 1
+
+run_bin() {
+  local bin="$1"
+  local m="$2"
+  local rc=0 t0 t1 ms
+  if [ "$m" = "kbd" ] || [ ! -s "in.txt" ]; then
+    if [ "$m" != "kbd" ] && [ ! -s "in.txt" ]; then
+      printf '\033[2m[键盘输入模式] 直接输入后按 Enter（结束输入 Ctrl+D）\033[0m\n'
+    else
+      printf '\033[2m==> 运行 ./%s（可直接输入/粘贴测试数据）\033[0m\n' "$stem"
+    fi
+    t0=$(date +%s%3N)
+    "$bin"
+    rc=$?
+    t1=$(date +%s%3N)
+  else
+    printf '\033[2m==> 运行 ./%s < in.txt\033[0m\n' "$stem"
+    t0=$(date +%s%3N)
+    "$bin" < "in.txt"
+    rc=$?
+    t1=$(date +%s%3N)
+  fi
+  ms=$((t1 - t0))
+  printf '\n\033[2m[结束 code=%s · 运行 %sms]\033[0m\n' "$rc" "$ms"
+  return $rc
+}
+
+case "$ext" in
+  cpp|cc|cxx|C)
+    bin="$dir/$stem"
+    mode_tag="/tmp/.vsc_mode_$(printf '%s' "$bin" | md5sum | cut -d' ' -f1)"
+    prev_mode=$(cat "$mode_tag" 2>/dev/null || true)
+    need_build=0
+    if [ ! -x "$bin" ] || [ "$file" -nt "$bin" ]; then
+      need_build=1
+    elif [ "$mode" = "o2" ] && [ "$prev_mode" != "o2" ]; then
+      need_build=1
+    fi
+
+    if [ "$need_build" = "1" ]; then
+      t0=$(date +%s%3N)
+      if [ "$mode" = "o2" ]; then
+        pch_opt=""
+        [ -f /opt/pch/o2/bits/stdc++.h.gch ] && pch_opt="-I/opt/pch/o2"
+        printf '\033[2m==> 编译 (O2) %s\033[0m\n' "$file"
+        g++ -fdiagnostics-color=always -std=c++17 -O2 -g -Wall -Wextra -DLOCAL $pch_opt -o "$bin" "$file" || {
+          printf '\033[31m==> 编译失败\033[0m\n'
+          exit 1
+        }
+        printf 'o2' > "$mode_tag"
+      else
+        pch_opt=""
+        [ -f /opt/pch/o0/bits/stdc++.h.gch ] && pch_opt="-I/opt/pch/o0"
+        printf '\033[2m==> 编译 %s\033[0m\n' "$file"
+        g++ -fdiagnostics-color=always -std=c++17 -O0 -Wall -Wextra -DLOCAL $pch_opt -o "$bin" "$file" || {
+          printf '\033[31m==> 编译失败\033[0m\n'
+          exit 1
+        }
+        printf 'o0' > "$mode_tag"
+      fi
+      t1=$(date +%s%3N)
+      printf '\033[2m[编译完成 %sms]\033[0m\n' "$((t1 - t0))"
+    else
+      printf '\033[2m[跳过编译，二进制已是最新]\033[0m\n'
+    fi
+    run_bin "$bin" "$mode"
+    ;;
+  c)
+    bin="$dir/$stem"
+    if [ ! -x "$bin" ] || [ "$file" -nt "$bin" ] || [ "$mode" = "o2" ]; then
+      t0=$(date +%s%3N)
+      opt="-O0"
+      [ "$mode" = "o2" ] && opt="-O2 -g"
+      printf '\033[2m==> 编译 %s\033[0m\n' "$file"
+      gcc -fdiagnostics-color=always $opt -Wall -Wextra -DLOCAL -o "$bin" "$file" || {
+        printf '\033[31m==> 编译失败\033[0m\n'
+        exit 1
+      }
+      t1=$(date +%s%3N)
+      printf '\033[2m[编译完成 %sms]\033[0m\n' "$((t1 - t0))"
+    fi
+    run_bin "$bin" "$mode"
+    ;;
+  py)
+    t0=$(date +%s%3N)
+    if [ "$mode" != "kbd" ] && [ -s "in.txt" ]; then
+      printf '\033[2m==> python3 %s < in.txt\033[0m\n' "$file"
+      python3 "$file" < "in.txt"
+    else
+      printf '\033[2m==> python3 %s\033[0m\n' "$file"
+      python3 "$file"
+    fi
+    rc=$?
+    t1=$(date +%s%3N)
+    printf '\n\033[2m[结束 code=%s · 运行 %sms]\033[0m\n' "$rc" "$((t1 - t0))"
+    exit $rc
+    ;;
+  sh)
+    bash "$file"
+    ;;
+  *)
+    echo "暂不支持直接运行 .$ext 文件"
+    exit 1
+    ;;
+esac

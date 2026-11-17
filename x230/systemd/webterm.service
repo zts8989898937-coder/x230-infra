@@ -1,0 +1,12 @@
+[Unit]
+Description=webterm wrapper page with tabs/split/paste-upload
+After=network.target ttyd.service
+
+[Service]
+User=zts
+ExecStart=/usr/bin/node --watch /home/zts/agent-share/webterm/server.js
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

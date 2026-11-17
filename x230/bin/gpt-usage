@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""打印 ChatGPT Plus / Codex 的用量窗口。token 过期（401）时先随便跑一次 gpt 刷新。"""
+import json, os, sys, time, urllib.request, datetime
+AUTH = os.path.expanduser('~/.codex/auth.json')
+try:
+    d = json.load(open(AUTH))
+except FileNotFoundError:
+    sys.exit('未登录：先 codex login --device-auth')
+t = d.get('tokens') or {}
+req = urllib.request.Request('https://chatgpt.com/backend-api/codex/usage', headers={
+    'Authorization': f"Bearer {t.get('access_token','')}",
+    'chatgpt-account-id': t.get('account_id',''),
+    'User-Agent': 'codex_cli_rs/0.166.0', 'originator': 'codex_cli_rs'})
+try:
+    j = json.load(urllib.request.urlopen(req, timeout=25))
+except Exception as e:
+    sys.exit(f'查询失败（{e}）。access token 可能过期，先运行一次 gpt "hi" 让它自动刷新。')
+r = j.get('rate_limit') or {}
+fmt = lambda s: datetime.datetime.fromtimestamp(time.time()+s).strftime('%m-%d %H:%M')
+print(f"账号 {j.get('email')}  plan={j.get('plan_type')}  可用={r.get('allowed')}")
+for name, label in (('primary_window','5 小时窗口'), ('secondary_window','每周窗口')):
+    w = r.get(name) or {}
+    if w:
+        print(f"{label}: 已用 {w.get('used_percent')}%  重置于 {fmt(w.get('reset_after_seconds') or 0)}")
+c = j.get('credits') or {}
+if c.get('balance'): print('额外 credits 余额:', c['balance'])

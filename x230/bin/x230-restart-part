@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# x230-restart-part — 按组件安全重启各个部分（保障网络防风控、不误杀长会话、DSH 用自救入口）
+# 用法：
+#   x230-restart-part <network|dsh|agents|docker|system> [--check]
+set -uo pipefail
+
+PART="${1:-}"
+CHECK=0
+[ "${2:-}" = "--check" ] && CHECK=1
+
+usage() {
+  echo "用法: $0 <network|dsh|agents|docker|system> [--check]"
+  exit 2
+}
+
+[ -z "$PART" ] && usage
+
+case "$PART" in
+  network)
+    echo "=== [重启策略: network] 校验目录 + HK直连 + Clash TUN + AI固定节点 + 风控探活 ==="
+    if [ "$CHECK" -eq 1 ]; then
+      /usr/local/bin/boot-network-guard --check
+      exit $?
+    fi
+    sudo install -d -o zts -g zts -m 0700 /run/clash-verge-service/users/1000
+    sudo /usr/local/bin/hk-direct-route.sh up || true
+    sudo systemctl restart clash-verge-service.service
+    sudo /usr/local/bin/boot-network-guard
+    sudo /usr/local/bin/ts-mark-fix.sh || true
+    /usr/local/bin/boot-network-guard --check
+    ;;
+
+  dsh)
+    echo "=== [重启策略: dsh] 必须走 dsh-restart-safe（脱离会话 + 重打 50~56 号补丁） ==="
+    if [ "$CHECK" -eq 1 ]; then
+      curl -s -o /dev/null -m 4 -w "dsh-web(100.110.77.111:3080) http=%{http_code}\n" http://100.110.77.111:3080/
+      curl -s -o /dev/null -m 4 -w "dsh-lan(192.168.8.120:3082) http=%{http_code}\n" http://192.168.8.120:3082/
+      exit 0
+    fi
+    exec /usr/local/bin/dsh-restart-safe
+    ;;
+
+  agents)
+    echo "=== [重启策略: agents] 仅重启后台桥接服务，绝不杀 pts 交互长会话 ==="
+    /usr/local/bin/boot-network-guard --check || {
+      echo "ERROR: 当前网络/AI出口探活未通过，拒绝重启 agent 桥接；请先跑 $0 network" >&2
+      exit 1
+    }
+    if [ "$CHECK" -eq 1 ]; then
+      systemctl is-active agy-bridge.service agy-egress.service agy-tunnel.service
+      exit 0
+    fi
+    sudo systemctl restart agy-bridge.service agy-egress.service agy-tunnel.service
+    sleep 2
+    systemctl is-active agy-bridge.service agy-egress.service agy-tunnel.service
+    ss -tln | grep -E ':(8899|1081)\b' || true
+    ;;
+
+  docker)
+    echo "=== [重启策略: docker] 重启 Docker 引擎并校验容器恢复 ==="
+    if [ "$CHECK" -eq 1 ]; then
+      docker ps --format '{{.Names}}\t{{.Status}}'
+      exit 0
+    fi
+    sudo systemctl restart docker.service
+    sleep 12
+    docker ps --format '{{.Names}}\t{{.Status}}'
+    ;;
+
+  system)
+    if [ "$CHECK" -eq 1 ]; then
+      exec /usr/local/bin/x230-safe-reboot --check
+    else
+      exec /usr/local/bin/x230-safe-reboot --now
+    fi
+    ;;
+
+  *)
+    usage
+    ;;
+esac

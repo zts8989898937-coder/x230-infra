@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+// TLS reverse proxy: 0.0.0.0:8444 -> 127.0.0.1:8443 (VS Code serve-web)
+const https = require('https'), http = require('http'), net = require('net'), fs = require('fs');
+const cert = fs.readFileSync('/etc/ssl/code-lan/cert.pem');
+const key  = fs.readFileSync('/etc/ssl/code-lan/key.pem');
+const UP_HOST = '127.0.0.1', UP_PORT = 8443;
+const path = require('path');
+// 局域网入口本地提供翻译文件（否则界面回退英文）
+const NLS_ROOT = '/usr/local/share/vscode-nls';
+
+function upstreamHeaders(h) {
+  const o = { ...h };
+  // 保留原始 Host/Origin，避免服务端 remote authority 校验失败
+  return o;
+}
+
+const server = https.createServer({ cert, key }, (req, res) => {
+  if (req.url.startsWith('/code/nls/')) {
+    const rel = decodeURIComponent(req.url.slice('/code/nls/'.length).split('?')[0]);
+    const f = path.join(NLS_ROOT, rel);
+    if (!f.startsWith(NLS_ROOT)) { res.writeHead(403); return res.end(); }
+    return fs.readFile(f, (e, buf) => {
+      if (e) { res.writeHead(404, {'content-type':'text/plain'}); return res.end('not found'); }
+      res.writeHead(200, {'content-type':'text/javascript; charset=utf-8','cache-control':'public, max-age=3600'});
+      res.end(buf);
+    });
+  }
+  const p = http.request({ host: UP_HOST, port: UP_PORT, path: req.url, method: req.method, headers: upstreamHeaders(req.headers) }, (pr) => {
+    res.writeHead(pr.statusCode, pr.headers);
+    pr.pipe(res);
+  });
+  p.on('error', () => { try { res.writeHead(502); res.end('bad gateway'); } catch (e) {} });
+  req.pipe(p);
+});
+
+server.on('upgrade', (req, socket, head) => {
+  const up = net.connect(UP_PORT, UP_HOST, () => {
+    const lines = [`${req.method} ${req.url} HTTP/1.1`];
+    const h = upstreamHeaders(req.headers);
+    for (const [k, v] of Object.entries(h)) lines.push(`${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
+    up.write(lines.join('\r\n') + '\r\n\r\n');
+    if (head && head.length) up.write(head);
+    up.pipe(socket); socket.pipe(up);
+  });
+  up.on('error', () => socket.destroy());
+  socket.on('error', () => up.destroy());
+});
+
+server.listen(8444, '0.0.0.0', () => console.log('code-web-lan-proxy on 0.0.0.0:8444 -> 127.0.0.1:8443'));

@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""dsh-health-probe — dsh-web 的一次性健康探针（只读，JSON 输出）
+
+不是简单 curl：同时看 进程 / 端口 / HTTP 语义 / 近 5 分钟启动错误 /
+未激活 entry / 补丁完整性，给出一个 overall 结论，供看门狗与人工排障共用。
+
+退出码：0 healthy / 1 degraded（能连但有错误）/ 2 down
+"""
+import json
+import pathlib
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+HOST = "100.110.77.111"
+PORT = 3080
+URL = f"http://{HOST}:{PORT}/"
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=15).stdout.strip()
+    except Exception as exc:  # noqa: BLE001
+        return f"ERR:{exc}"
+
+def probe():
+    out = {}
+    out["proc"] = sh(["systemctl", "is-active", "dsh-web"]) == "active"
+    t0 = time.time()
+    try:
+        with socket.create_connection((HOST, PORT), timeout=3):
+            out["port"] = True
+    except OSError:
+        out["port"] = False
+    code = None
+    if out["port"]:
+        try:
+            with urllib.request.urlopen(URL, timeout=5) as r:
+                code = r.status
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        except Exception:  # noqa: BLE001
+            code = None
+    out["http"] = code
+    out["latency_ms"] = int((time.time() - t0) * 1000)
+    # 入口合法响应：200 / 302 / 401（未登录）/ 403（Host 不在白名单时也算活着）
+    out["http_ok"] = code in (200, 301, 302, 303, 401, 403)
+    log = sh(["journalctl", "-u", "dsh-web", "--since", "-5 min", "--no-pager"])
+    out["activation_errors"] = len(re.findall(r"entry did not activate|ValidationError", log))
+    out["startup_warnings"] = len(re.findall(r"\[config\] 警告|spawn .* ENOENT|ENOENT", log))
+    # 记忆预算（2026-11-09 审计 P1）：KEY 每轮都进上下文，膨胀了要能看见
+    mem = pathlib.Path.home() / ".dsh/memories"
+    key = mem / "projects/ce8898c9c2df/KEY.md"
+    daily = sorted((mem / "daily").glob("*.md")) if (mem / "daily").exists() else []
+    out["memory"] = {
+        "key_bytes": key.stat().st_size if key.exists() else 0,
+        "key_entries": key.read_text().count("\n\u00a7\n") + 1 if key.exists() else 0,
+        "daily_files": len(daily),
+        "daily_bytes": sum(f.stat().st_size for f in daily),
+    }
+    doct = subprocess.run(["/usr/local/bin/dsh-patch-doctor"], capture_output=True, text=True)
+    out["patches_missing"] = doct.returncode
+    if not out["proc"] or not out["port"]:
+        out["overall"] = "down"
+    elif not out["http_ok"] or out["activation_errors"]:
+        out["overall"] = "degraded"
+    elif out["patches_missing"]:
+        out["overall"] = "degraded"
+    else:
+        out["overall"] = "healthy"
+    return out
+
+if __name__ == "__main__":
+    res = probe()
+    if "--quiet" in sys.argv:
+        print(res["overall"])
+    else:
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+    sys.exit({"healthy": 0, "degraded": 1, "down": 2}[res["overall"]])

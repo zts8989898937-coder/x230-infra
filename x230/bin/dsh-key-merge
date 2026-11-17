@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""dsh-key-merge — 把一个分叉的 KEY.md 里「规范文件没有的条目」并进规范文件
+
+分叉的成因是 store.js 用 rename 覆盖软链（已修）。修复前的分叉可能还带着
+只存在于分叉里的条目，直接丢弃会丢记忆；这里按「条目正文完全相同」去重，
+只把新增条目追加到规范文件（保留原顺序）。
+
+用法：dsh-key-merge <fork.md> <canonical.md> [--dry-run]
+"""
+import pathlib
+import sys
+
+SEP = "\n\u00a7\n"
+
+def entries(path: pathlib.Path):
+    text = path.read_text()
+    return [e.strip() for e in text.split(SEP) if e.strip()]
+
+def main():
+    if len(sys.argv) < 3:
+        print("用法: dsh-key-merge <fork.md> <canonical.md> [--dry-run]", file=sys.stderr)
+        return 2
+    fork, canon = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+    dry = "--dry-run" in sys.argv
+    a, b = entries(fork), entries(canon)
+    have = set(b)
+    add = [e for e in a if e not in have]
+    if not add:
+        print(f"无新增条目（分叉 {len(a)} 条，规范 {len(b)} 条）")
+        return 0
+    if dry:
+        print(f"[dry] 会追加 {len(add)} 条：")
+        for e in add:
+            print("  -", e.splitlines()[0][:70])
+        return 0
+    canon.write_text(SEP.join(b + add) + "\n")
+    print(f"追加 {len(add)} 条（{len(b)} → {len(b) + len(add)}）")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,10 @@
+[Unit]
+Description=One-shot Arch Linux rolling upgrade at 2026-11-16 04:00:00
+
+[Timer]
+OnCalendar=2026-11-16 04:00:00
+Unit=arch-auto-roll.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

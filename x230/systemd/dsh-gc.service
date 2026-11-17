@@ -1,0 +1,9 @@
+[Unit]
+Description=DSH 遗留资源回收（孤儿 chromium / 陈旧 tmp profile）
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dsh-gc
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,850 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""dsh-roll-ai-review — 夜间滚包 AI 审查
+
+在 dsh-nightly-roll 跑完之后执行：
+  1) 收集证据：滚包日志、服务状态、HTTP 探测、journal 错误、配置校验、
+     本地补丁是否还在、依赖服务、资源、网络出口、历史趋势。
+  2) 依次调用审查模型（默认 agy Sonnet → DeepSeek → Gemini → GLM，逐级降级）。
+  3) 输出结构化结论（pass/warn/fail）+ Markdown 报告 + JSON 状态。
+  4) 非 pass 时推飞书（ntfy 已被用户全局静音，不再用）。
+  5) 可选：高置信度 fail 时回滚 last-good 配置（默认关闭）。
+
+用法：
+  dsh-roll-ai-review --roll-rc 0 --since "2026-11-08 04:00:00"
+  dsh-roll-ai-review --roll-rc 0 --since "..." --dry-run --report-dir /tmp/ai-test
+  dsh-roll-ai-review --print-evidence --since "2026-11-08 04:00:00"
+  dsh-roll-ai-review --feishu-check
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+
+HOME = "/home/zts"
+STATE_DIR = "/var/lib/dsh-roll"
+LOG = "/var/log/dsh-nightly-roll.log"
+PROFILE = f"{HOME}/.dsh/profiles/web"
+PATCH = f"{PROFILE}/cordis.patch.yml"
+REPORT_ROOT = f"{HOME}/agent-share/工作产出/01-文档报告/夜间滚包审查"
+CONF = "/etc/dsh-roll-ai-review.conf"
+DSH_URL = "http://100.110.77.111:3080"
+BACKUP_ROOT = f"{HOME}/agent-share/工作产出/05-备份归档"
+CAND = f"{STATE_DIR}/candidate-cordis.patch.yml"
+GOOD = f"{STATE_DIR}/last-good-cordis.patch.yml"
+PUBLIC_URL = "https://dsh.stillfloating.top/"
+PROXY = "http://127.0.0.1:7897"
+
+DEFAULTS = {
+    "AI_REVIEW": "1",
+    "AI_MODELS": "agy:claude-sonnet-5-5,deepseek:deepseek-flash,gemini:gemini-3.5-flash,zai:glm-5.3-flash",
+    "AI_MAX_TOKENS": "6000",
+    "AI_NOTIFY": "warn,fail",
+    "AI_NOTIFY_MIN_CONFIDENCE": "0.6",
+    "AI_AUTO_ROLLBACK": "0",
+    "AI_KEEP_DAYS": "30",
+}
+
+
+def log(msg):
+    line = f"[{datetime.now():%F %T}] [ai-review] {msg}"
+    try:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+    print(line, flush=True)
+
+
+def read_conf():
+    conf = dict(DEFAULTS)
+    try:
+        with open(CONF, encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                conf[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+def run(cmd, timeout=15, as_user=False):
+    """执行命令，返回 (rc, 合并输出)。as_user=True 时降权到 zts。"""
+    if as_user and os.geteuid() == 0:
+        argv = ["runuser", "-u", "zts", "--", "env", "HOME=" + HOME, "bash", "-lc", cmd]
+    else:
+        argv = ["bash", "-lc", cmd]
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, "timeout"
+    except Exception as e:  # noqa: BLE001
+        return 1, str(e)
+
+
+def read_file(path, limit=200000):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(limit)
+    except OSError:
+        return ""
+
+
+def sha256(path):
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        return h.hexdigest()[:16]
+    except OSError:
+        return "missing"
+
+
+def human_kb(v):
+    try:
+        n = int(v) / 1024.0
+        return f"{n / 1024:.0f}MB"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+# ────────────────────────────── 证据收集 ──────────────────────────────
+
+
+def ev_roll_log(since):
+    text = read_file(LOG)
+    lines = text.splitlines()
+    # 取最后一次 "nightly roll" 起始块；没有就取尾部
+    start = None
+    for i, ln in enumerate(lines):
+        if "nightly roll" in ln and ("start" in ln or "wrapper" in ln):
+            start = i
+    block = "\n".join(lines[start:]) if start is not None else "\n".join(lines[-40:])
+    if len(block) > 4000:
+        block = block[-4000:]
+    return block.strip() or "(空)"
+
+
+def ev_service():
+    keys = "ActiveState,SubState,MainPID,NRestarts,ExecMainStartTimestamp,MemoryCurrent,CPUUsageNSec,TasksCurrent,Result"
+    _, show = run(f"systemctl show dsh-web -p {keys} --no-pager", 10)
+    pid_m = re.search(r"MainPID=(\d+)", show)
+    pid = pid_m.group(1) if pid_m else "0"
+    etime = ""
+    if pid and pid != "0":
+        _, et = run(f"ps -o etimes= -p {pid}", 5)
+        etime = et.strip()
+    mem = re.search(r"MemoryCurrent=(\d+)", show)
+    memh = human_kb(mem.group(1)) if mem else "?"
+    return f"{show.strip()}\nMainPID 已运行={etime}s MemoryCurrent={memh}"
+
+
+def ev_health():
+    out = []
+    for _ in range(3):
+        rc, s = run(f"curl -s -o /dev/null -m 5 -w '%{{http_code}} %{{time_total}}' {DSH_URL}/", 8)
+        out.append(s.strip() if rc == 0 else f"ERR({s.strip()[:40]})")
+        time.sleep(0.5)
+    return "本机 / 探测: " + ", ".join(out)
+
+
+def ev_journal(since):
+    rc, text = run(f'journalctl -u dsh-web --since "{since}" --no-pager -o cat 2>/dev/null', 25)
+    if rc != 0 and not text.strip():
+        return "(journalctl 读取失败)"
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    pat = re.compile(
+        r"error|fatal|unhandled|exception|ValidationError|ENOENT|EADDRINUSE|EACCES|"
+        r"crash|panic|entry did not activate|failed|warning|warn\b",
+        re.I,
+    )
+    errs = [ln for ln in lines if pat.search(ln)]
+    sigs = {}
+    for ln in errs:
+        s = re.sub(r"\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\.\d+)?", "", ln)
+        s = re.sub(r"\b[0-9a-fA-F]{8,}\b", "<hex>", s)
+        s = re.sub(r"\b\d+(\.\d+)?\b", "<n>", s)
+        s = re.sub(r"\s+", " ", s).strip()[:150]
+        sigs[s] = sigs.get(s, 0) + 1
+    top = sorted(sigs.items(), key=lambda kv: -kv[1])[:8]
+    tail = "\n".join(errs[-15:])[-2500:]
+    summary = [f"总行数={len(lines)} 错误/警告行={len(errs)} 去重后={len(sigs)}"]
+    summary += [f"  ×{n}  {s}" for s, n in top]
+    return "\n".join(summary) + "\n最近错误尾部:\n" + (tail or "(无)")
+
+
+def ev_config():
+    rc, out = run("cd /tmp && dsh --profile web --dump-config >/dev/null 2>&1", 25, as_user=True)
+    var, vout = run("cd /tmp && dsh --profile web --dump-config 2>&1 >/dev/null | tail -3", 25, as_user=True)
+    patch_hash = sha256(PATCH)
+    cand = f"{STATE_DIR}/candidate-cordis.patch.yml"
+    good = f"{STATE_DIR}/last-good-cordis.patch.yml"
+    cmp_cur_good = "same" if os.path.exists(good) and sha256(good) == patch_hash else "differs/missing"
+    diff_head = ""
+    if os.path.exists(good) and os.path.exists(cand):
+        _, d = run(f"diff -u {good} {cand} | head -40", 8)
+        diff_head = d.strip()
+    return (
+        f"dump-config rc={rc}（0=通过）\nstderr: {vout.strip()[:500]}\n"
+        f"当前 patch sha={patch_hash} candidate={sha256(cand)} last-good={sha256(good)}"
+        f"（当前 vs last-good: {cmp_cur_good}）\n"
+        + (f"last-good 与本次候选差异(前40行):\n{diff_head}" if diff_head else "")
+    )
+
+
+def ev_integrity():
+    checks = []
+
+    def mark(path, needle, label):
+        if not os.path.exists(path):
+            checks.append(f"{label}: 文件缺失")
+            return
+        ok = needle in read_file(path, 8_000_000)
+        checks.append(f"{label}: {'OK' if ok else '缺失补丁!'}")
+
+    mark(f"{PROFILE}/node_modules/@linxin666/dsh-client-ui-skill-explorer/lib/index.js",
+         "isHostTrustedBrowserRequest", "skill-explorer LAN 信任补丁")
+    mark(f"{PROFILE}/node_modules/dsh-better-sidebar/lib/client.js",
+         "__dshSafeUUID", "better-sidebar UUID 补丁")
+    for name in ("dsh-context-model-card-patch", "dsh-context-glm-quota-patch"):
+        checks.append(f"{name}: {'存在' if os.path.exists('/usr/local/bin/' + name) else '缺失'}")
+
+    _, n_act = run("journalctl -u dsh-web --since '-30 min' --no-pager 2>/dev/null | grep -c 'did not activate'", 10)
+    checks.append(f"近30分钟 entry 未激活次数: {n_act.strip() or '0'}")
+
+    # MCP 配置条数
+    patch = read_file(PATCH)
+    checks.append(f"patch 里 MCP 条目数: {len(re.findall(r'^-?\s*- id: mcp-', patch, re.M))}")
+    return "\n".join(checks)
+
+
+def ev_side():
+    services = [
+        "dsh-tunnel", "agy-bridge", "agy-tunnel", "vscode-web", "vscode-tunnel",
+        "x230-status", "dsh-watchdog.timer", "dsh-nightly-roll.timer", "dsh-gc.timer",
+        "clash-node-pin.timer", "dsh-public-cookie.timer",
+    ]
+    rc, out = run("systemctl is-active " + " ".join(services), 10)
+    states = out.split()
+    pairs = list(zip(services, states + ["?"] * len(services)))
+    return "  ".join(f"{s}={st}" for s, st in pairs if s) + f"\n(is-active rc={rc})"
+
+
+def ev_resources():
+    mem = {}
+    for line in read_file("/proc/meminfo").splitlines():
+        m = re.match(r"(\w+):\s+(\d+)", line)
+        if m:
+            mem[m.group(1)] = int(m.group(2))
+    avail = mem.get("MemAvailable", 0) // 1024
+    total = mem.get("MemTotal", 0) // 1024
+    swap_total = mem.get("SwapTotal", 0) // 1024
+    swap_free = mem.get("SwapFree", 0) // 1024
+    load = read_file("/proc/loadavg").strip()
+    _, disk = run("df -h / | tail -1", 8)
+    temps = []
+    for i in range(12):
+        p = f"/sys/class/thermal/thermal_zone{i}/temp"
+        t = read_file(p).strip()
+        if t.isdigit():
+            temps.append(int(t) / 1000.0)
+    temp = f"{max(temps):.0f}°C" if temps else "?"
+    _, zram = run("zramctl 2>/dev/null | tail -n +2 | head -2", 8)
+    _, up = run("uptime -p", 5)
+    return (
+        f"内存 {avail}MB 可用 / {total}MB；swap {swap_total - swap_free}MB used / {swap_total}MB；"
+        f"load {load}；磁盘 {disk.strip()}；最高温 {temp}；{up.strip()}\nzram: {zram.strip()}"
+    )
+
+
+def ev_network():
+    rc, ip = run(f"curl -s -m 8 -x {PROXY} https://ipinfo.io/ip", 12)
+    rc2, direct = run("curl -s -m 8 https://ipinfo.io/ip", 12)
+    _, pin = run("/usr/local/bin/clash-node-pin status 2>&1 | head -6", 10)
+    rc3, pub = run(f"curl -s -o /dev/null -m 10 -w '%{{http_code}} %{{time_total}}' {PUBLIC_URL}", 14)
+    return (
+        f"代理出口={ip.strip() or 'ERR'}；直连出口={direct.strip() or 'ERR'}\n"
+        f"公网入口 {PUBLIC_URL} → {pub.strip() or 'ERR'}（401=正常需登录）\n"
+        f"节点固定: {pin.strip()[:600]}"
+    )
+
+
+def ev_history():
+    path = f"{STATE_DIR}/history.jsonl"
+    if not os.path.exists(path):
+        return "(暂无历史)"
+    lines = [ln for ln in read_file(path).splitlines() if ln.strip()][-8:]
+    return "\n".join(lines)
+
+
+def ev_sessions():
+    base = f"{HOME}/.dsh/sessions"
+    try:
+        dirs = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
+    except OSError:
+        return "(读取失败)"
+    _, size = run(f"du -sh {base} 2>/dev/null | cut -f1", 10)
+    return f"会话目录 {len(dirs)} 个，占用 {size.strip() or '?'}"
+
+
+def collect_evidence(since, roll_rc):
+    parts = []
+    t0 = time.time()
+
+    def add(title, fn):
+        try:
+            parts.append(f"## {title}\n{fn()}")
+        except Exception as e:  # noqa: BLE001
+            parts.append(f"## {title}\n(采集失败: {e})")
+
+    parts.append(f"# 证据包 {datetime.now():%F %T}（roll_rc={roll_rc}, since={since}）")
+    add("1 滚包日志", lambda: ev_roll_log(since))
+    add("2 服务状态", ev_service)
+    add("3 HTTP 健康", ev_health)
+    add("4 journal 错误（滚包后）", lambda: ev_journal(since))
+    add("5 配置校验", ev_config)
+    add("6 本地补丁/插件完整性", ev_integrity)
+    add("7 依赖服务", ev_side)
+    add("8 资源", ev_resources)
+    add("9 网络", ev_network)
+    add("10 历史滚包", ev_history)
+    add("11 会话库", ev_sessions)
+    text = "\n\n".join(parts)
+    if len(text) > 12000:
+        text = text[:12000] + "\n…(证据已截断)"
+    return text, round(time.time() - t0, 1)
+
+
+# ────────────────────────────── 模型调用 ──────────────────────────────
+
+
+def key_from_env_file(var):
+    for line in read_file(f"{HOME}/.config/deepseek.env").splitlines():
+        if line.startswith(var + "="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+def key_from_file(path):
+    return read_file(path).strip()
+
+
+PROVIDERS = {
+    "agy": {
+        "url": "http://127.0.0.1:8899/v1/chat/completions",
+        "key": lambda: "agy-local",
+        "timeout": 95,
+        "extra": {"reasoning_effort": "low"},
+    },
+    "deepseek": {
+        "url": "https://api.deepseek.com/chat/completions",
+        "key": lambda: key_from_env_file("DEEPSEEK_API_KEY"),
+        "timeout": 90,
+        "extra": {"reasoning_effort": "low"},
+    },
+    "gemini": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "key": lambda: key_from_file(f"{HOME}/.config/secrets/gemini-api.key"),
+        "timeout": 60,
+        "extra": {},
+    },
+    "zai": {
+        "url": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+        "key": lambda: key_from_file(f"{HOME}/.config/secrets/zai-coding-plan.key"),
+        "timeout": 70,
+        "extra": {},
+    },
+}
+
+
+def call_model(spec, messages, max_tokens):
+    provider, model = spec.split(":", 1)
+    p = PROVIDERS.get(provider)
+    if not p:
+        raise RuntimeError(f"未知 provider {provider}")
+    key = p["key"]()
+    if not key:
+        raise RuntimeError(f"{provider} 无 key")
+    body = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    body.update(p.get("extra") or {})
+    req = urllib.request.Request(
+        p["url"],
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=p["timeout"]) as resp:
+        data = json.loads(resp.read().decode())
+    if "error" in data and not data.get("choices"):
+        raise RuntimeError(str(data["error"])[:300])
+    msg = (data.get("choices") or [{}])[0].get("message") or {}
+    content = msg.get("content") or ""
+    if not content.strip():
+        raise RuntimeError(f"空回复 finish_reason={(data.get('choices') or [{}])[0].get('finish_reason')}")
+    return content, data.get("usage") or {}
+
+
+def parse_json_reply(text):
+    t = text.strip()
+    t = re.sub(r"^```(?:json)?\s*", "", t)
+    t = re.sub(r"\s*```$", "", t)
+    start = t.find("{")
+    end = t.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("回复里没有 JSON 对象")
+    obj = json.loads(t[start:end + 1])
+    if obj.get("verdict") not in ("pass", "warn", "fail"):
+        raise ValueError("verdict 非法")
+    if obj.get("decision") not in ("keep", "revert", "restart"):
+        obj["decision"] = "revert" if obj.get("verdict") == "fail" else "keep"
+    sc = obj.get("scores") if isinstance(obj.get("scores"), dict) else {}
+    obj["scores"] = {k: sc.get(k) for k in ("performance", "compatibility", "necessity", "safety")}
+    return obj
+
+
+SYSTEM_PROMPT = """你是 X230 上 DSH Web 的「滚包结果评估器」。滚包 = 每天 04:00 自动备份配置、重启 dsh-web、健康检查、失败自动回滚。它已经在跑；你的任务不是决定「要不要滚」，而是评估「这一次滚得值不值、稳不稳」，并在必要时让系统自动纠正。
+
+只看四件事，各打 0-10 分：
+1. performance：重启后内存是否回落、HTTP 延迟是否正常、进程是否稳定（对比滚包前后 rss/pid/延迟/重启次数）。
+2. compatibility：配置校验、插件是否全部激活、关键本地补丁是否还在、MCP 与依赖服务是否正常。
+3. necessity：距上次成功滚包多久、内存增长趋势、本次滚包是否解决了实际问题；没有收益要如实说，但不因此否决每日滚包。
+4. safety：失败时能否回滚（last-good 是否存在且新鲜）、证据是否足够、有没有未解释的高风险信号。
+
+纪律（违反即无效）：
+- 绝不建议「人工确认 / 手动执行 / 等你有空 / 择机再滚 / 先别滚 / 观察几天再说」；系统是全自动的，没有人工环节。
+- 绝不因为「内核更新、系统更新、重启本身、需要人看着」而建议推迟或取消滚包。
+- actions 必须是系统自己能执行的动作（如「把 last-good 更新为当前配置」「再重启一次 dsh-web」「恢复某插件补丁」），不要写需要人点确认的步骤。
+- 每天都会滚，不存在「这个不滚那个不滚」；你的职责是让它滚得安全，而不是找理由不滚。
+
+decision 只有三个：
+- keep：当前状态可以保留（默认）。
+- revert：配置/插件层面出现确定性破坏，必须恢复到 last-good。
+- restart：配置没问题但进程状态异常，再重启一次即可。
+
+verdict 用 pass/warn/fail 表达严重度；拿不准写 warn，fail 要有硬证据。
+只输出一个 JSON 对象，不要 markdown、不要多余文字：
+{"decision":"keep|revert|restart","verdict":"pass|warn|fail","headline":"不超过40字","confidence":0到1,
+ "scores":{"performance":0-10,"compatibility":0-10,"necessity":0-10,"safety":0-10},
+ "checks":{"roll":"ok|warn|fail|unknown","service":"...","config":"...","plugins":"...","side_services":"...","resources":"...","network":"..."},
+ "findings":[{"severity":"info|warn|critical","title":"...","evidence":"引用证据中的具体行或数值","impact":"..."}],
+ "actions":["最多3条，系统可自动执行的动作"],
+ "next_watch":"明天最该盯的一件事"}
+"""
+
+
+def review(evidence, conf, override_spec=None):
+    models = [m.strip() for m in (override_spec or conf["AI_MODELS"]).split(",") if m.strip()]
+    max_tokens = int(conf.get("AI_MAX_TOKENS", "2600") or 2600)
+    attempts = []
+    for spec in models:
+        started = time.time()
+        try:
+            text, usage = call_model(spec, [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": evidence},
+            ], max_tokens)
+            data = parse_json_reply(text)
+            attempts.append({"model": spec, "ok": True, "seconds": round(time.time() - started, 1)})
+            return data, spec, attempts, usage
+        except Exception as e:  # noqa: BLE001
+            attempts.append({"model": spec, "ok": False, "seconds": round(time.time() - started, 1),
+                             "error": str(e)[:300]})
+            log(f"模型 {spec} 失败，降级：{str(e)[:200]}")
+    return None, "heuristic", attempts, {}
+
+
+def heuristic_verdict(roll_rc, evidence, conf_unused=None):
+    """全部模型失败时的兜底判定：只用滚包结果与硬信号。"""
+    checks = {"roll": "ok", "service": "unknown", "config": "unknown", "plugins": "unknown",
+              "side_services": "unknown", "resources": "unknown", "network": "unknown"}
+    findings, verdict = [], "pass"
+    if roll_rc != 0:
+        verdict = "fail"
+        checks["roll"] = "fail"
+        findings.append({"severity": "critical", "title": f"滚包返回码 {roll_rc}",
+                         "evidence": "见滚包日志", "impact": "本次滚包未正常完成"})
+    if re.search(r"http=(000|5\d\d)", evidence):
+        verdict = "fail"
+        checks["service"] = "fail"
+        findings.append({"severity": "critical", "title": "健康探测异常", "evidence": "http 非 2xx/3xx/401",
+                         "impact": "WebUI 可能不可用"})
+    if "dump-config rc=0" not in evidence:
+        verdict = "fail" if verdict == "fail" else "warn"
+        checks["config"] = "fail"
+        findings.append({"severity": "critical", "title": "dump-config 未通过",
+                         "evidence": "配置校验失败", "impact": "配置可能写坏"})
+    if "缺失补丁!" in evidence:
+        verdict = "warn" if verdict == "pass" else verdict
+        checks["plugins"] = "warn"
+        findings.append({"severity": "warn", "title": "本地插件补丁缺失",
+                         "evidence": "见证据包第6节", "impact": "相关 UI 功能可能复发故障"})
+    if verdict == "pass":
+        findings.append({"severity": "info", "title": "AI 审查降级为规则判定",
+                         "evidence": "所有模型均调用失败", "impact": "结论保守，建议人工复核"})
+    return {
+        "verdict": verdict,
+        "headline": "AI 审查不可用，按规则判定：" + {"pass": "通过", "warn": "有告警", "fail": "失败"}[verdict],
+        "confidence": 0.4,
+        "checks": checks,
+        "findings": findings,
+        "actions": ["检查模型密钥/额度/网络后重跑 dsh-roll-ai-review"],
+        "decision": "revert" if verdict == "fail" else "keep",
+        "scores": {"performance": None, "compatibility": None, "necessity": None, "safety": None},
+        "next_watch": "下一次滚包自动重试模型链",
+    }
+
+
+# ────────────────────────────── 输出 ──────────────────────────────
+
+
+def badge(v):
+    return {"pass": "✅ pass", "warn": "⚠️ warn", "fail": "❌ fail"}.get(v, v)
+
+
+def write_report(verdict_obj, spec, attempts, evidence, roll_rc, elapsed, report_dir, notify_state=""):
+    day = datetime.now().strftime("%Y-%m-%d")
+    os.makedirs(report_dir, exist_ok=True)
+    path = os.path.join(report_dir, f"{day}.md")
+    checks = verdict_obj.get("checks") or {}
+    sc = verdict_obj.get("scores") or {}
+    rows = "\n".join(f"| {k} | {v} |" for k, v in checks.items())
+    finds = []
+    for f in (verdict_obj.get("findings") or [])[:8]:
+        finds.append(f"- **[{f.get('severity','info')}] {f.get('title','')}**\n"
+                     f"  - 证据：{f.get('evidence','')}\n  - 影响：{f.get('impact','')}")
+    actions = "\n".join(f"- {a}" for a in (verdict_obj.get("actions") or [])[:5])
+    model_lines = "\n".join(
+        f"- {a['model']}: {'ok' if a['ok'] else 'fail'} {a.get('seconds','?')}s"
+        + (f" — {a.get('error','')}" if not a["ok"] else "")
+        for a in attempts
+    )
+    md = f"""# 夜间滚包 AI 审查 · {day}
+
+> **{badge(verdict_obj.get('verdict'))}** ｜ 决定 `{verdict_obj.get('decision', 'keep')}` ｜ 置信度 {verdict_obj.get('confidence', '?')} ｜ 模型 `{spec}` ｜ 滚包 rc={roll_rc} ｜ 采集 {elapsed}s
+>
+> {verdict_obj.get('headline', '')}
+>
+> 四维评分：性能 {sc.get('performance', '-')}/10 ｜ 兼容 {sc.get('compatibility', '-')}/10 ｜ 必要 {sc.get('necessity', '-')}/10 ｜ 安全 {sc.get('safety', '-')}/10
+
+## 审查项
+| 项 | 结果 |
+|---|---|
+{rows}
+
+## 发现
+{chr(10).join(finds) if finds else '- 无'}
+
+## 建议
+{actions or '- 无'}
+
+## 明天盯一件事
+{verdict_obj.get('next_watch', '-')}
+
+## 模型调用链
+{model_lines or '- heuristic'}
+
+{f'## 通知{chr(10)}{notify_state}' if notify_state else ''}
+
+## 证据包
+```text
+{evidence}
+```
+"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(md)
+    latest = os.path.join(report_dir, "最新.md")
+    shutil.copyfile(path, latest)
+    if os.geteuid() == 0:
+        for p in (path, latest):
+            try:
+                os.chown(p, 1000, 1000)
+            except OSError:
+                pass
+    # 状态 JSON
+    state = {
+        "date": day, "time": datetime.now().strftime("%F %T"),
+        "verdict": verdict_obj.get("verdict"), "headline": verdict_obj.get("headline"),
+        "confidence": verdict_obj.get("confidence"), "model": spec,
+        "roll_rc": roll_rc, "checks": checks,
+        "findings": verdict_obj.get("findings"), "actions": verdict_obj.get("actions"),
+        "decision": verdict_obj.get("decision"), "scores": sc,
+        "auto_action": verdict_obj.get("auto_action"),
+        "attempts": attempts, "report": path,
+    }
+    try:
+        with open(os.path.join(STATE_DIR, f"ai-review-{day}.json"), "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        log(f"状态 JSON 写入失败（非 root 运行时正常）: {e}")
+    return path, state
+
+
+def feishu_send(text):
+    try:
+        state = json.loads(read_file(f"{HOME}/.dsh/feishu-im/state.json") or "{}")
+    except json.JSONDecodeError:
+        return "state.json 解析失败"
+    app_id, secret = state.get("appId"), state.get("appSecret")
+    receive = state.get("ownerOpenId") or state.get("homeChatId")
+    if not (app_id and secret and receive):
+        return "飞书未配置 appId/appSecret/owner"
+    domain = (state.get("domain") or "feishu").lower()
+    base = "https://open.larksuite.com" if domain in ("lark", "larksuite") else "https://open.feishu.cn"
+
+    def post(url, body, token=None):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            return json.loads(resp.read().decode())
+
+    try:
+        tok = post(base + "/open-apis/auth/v3/tenant_access_token/internal",
+                   {"app_id": app_id, "app_secret": secret})
+        if tok.get("code") != 0:
+            return f"取 token 失败: {tok.get('msg')}"
+        msg = post(
+            base + "/open-apis/im/v1/messages?receive_id_type=open_id",
+            {"receive_id": receive, "msg_type": "text",
+             "content": json.dumps({"text": text}, ensure_ascii=False)},
+            tok.get("tenant_access_token"),
+        )
+        if msg.get("code") != 0:
+            return f"发送失败: {msg.get('msg')}"
+        return "ok"
+    except Exception as e:  # noqa: BLE001
+        return f"异常: {str(e)[:200]}"
+
+
+def feishu_check():
+    try:
+        state = json.loads(read_file(f"{HOME}/.dsh/feishu-im/state.json") or "{}")
+    except json.JSONDecodeError:
+        print("state.json 解析失败")
+        return 1
+    app_id, secret = state.get("appId"), state.get("appSecret")
+    receive = state.get("ownerOpenId") or state.get("homeChatId")
+    domain = (state.get("domain") or "feishu").lower()
+    base = "https://open.larksuite.com" if domain in ("lark", "larksuite") else "https://open.feishu.cn"
+    print(f"appId={app_id} domain={domain} receive={receive} bot={state.get('botName')}")
+    try:
+        req = urllib.request.Request(
+            base + "/open-apis/auth/v3/tenant_access_token/internal",
+            data=json.dumps({"app_id": app_id, "app_secret": secret}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            d = json.loads(resp.read().decode())
+        print("token:", "ok" if d.get("code") == 0 else d)
+        return 0 if d.get("code") == 0 else 1
+    except Exception as e:  # noqa: BLE001
+        print("token error:", e)
+        return 1
+
+
+# ────────────────────────────── 自动纠正 ──────────────────────────────
+
+
+def http_code(timeout=4):
+    _, c = run(f"curl -s -o /dev/null -m {timeout} -w '%{{http_code}}' {DSH_URL}/", timeout + 3)
+    return (c or "").strip()
+
+
+def wait_healthy(seconds=120):
+    end = time.time() + seconds
+    while time.time() < end:
+        if http_code() in ("200", "302", "401"):
+            return True
+        time.sleep(2)
+    return False
+
+
+def config_valid():
+    """必须以 zts 的身份、用真实 HOME 校验，root 下 dump-config 会看错 profile。"""
+    rc, _ = run("cd /tmp && runuser -u zts -- env HOME=/home/zts dsh --profile web --dump-config >/dev/null 2>&1", 45)
+    return rc == 0
+
+
+def revert_sources():
+    """按新鲜度给出可回滚的配置：last-good 优先，其次最近的非当天备份。"""
+    out = []
+    if os.path.exists(GOOD) and os.path.getsize(GOOD) > 1000:
+        out.append(GOOD)
+    try:
+        days = sorted([d for d in os.listdir(BACKUP_ROOT) if re.fullmatch(r"\d{8}", d)], reverse=True)
+        today = datetime.now().strftime("%Y%m%d")
+        for d in days:
+            if d == today:
+                continue
+            p = os.path.join(BACKUP_ROOT, d, "cordis.patch.yml")
+            if os.path.exists(p) and os.path.getsize(p) > 1000:
+                out.append(p)
+                break
+    except OSError:
+        pass
+    return out
+
+
+def apply_config(src):
+    shutil.copyfile(src, PATCH)
+    try:
+        os.chown(PATCH, 1000, 1000)
+    except OSError:
+        pass
+
+
+def maybe_auto_action(vo, state, conf, roll_rc):
+    """自动纠正：keep 不动；restart 再重启；revert 回滚并验证。全程无需人工。"""
+    if str(conf.get("AI_AUTO_ACTION", "1")).strip() == "0":
+        return "自动动作：已关闭（AI_AUTO_ACTION=0）"
+
+    decision = vo.get("decision") or "keep"
+    verdict = state.get("verdict")
+    confv = float(state.get("confidence") or 0)
+
+    # 核心已彻底失败（rc=3）时，无论模型说什么都进入回滚
+    if roll_rc == 3:
+        decision = "revert"
+    # 模型判 fail 却没给动作时，按回滚处理
+    if verdict == "fail" and decision == "keep":
+        decision = "revert"
+    # 低置信度的 revert 降级为再重启一次（不确定时选破坏性小的动作）
+    if decision == "revert" and confv < 0.6 and roll_rc != 3:
+        decision = "restart"
+
+    if decision == "keep":
+        return "自动动作：无需处理（keep）"
+
+    if decision == "restart":
+        run("systemctl restart dsh-web", 60)
+        ok = wait_healthy(120)
+        return f"自动动作：重启 dsh-web → {'成功' if ok else '仍不健康'}"
+
+    # revert：按 last-good → 最近备份 依次尝试
+    tried = []
+    for src in revert_sources():
+        if os.path.exists(CAND) and sha256(src) == sha256(CAND):
+            continue  # 与本次候选相同，回滚没有意义
+        tried.append(src)
+        apply_config(src)
+        run("systemctl restart dsh-web", 60)
+        ok = wait_healthy(120)
+        if ok and config_valid():
+            label = "last-good" if src == GOOD else os.path.basename(os.path.dirname(src))
+            return f"自动动作：回滚到 {label} → 成功"
+        log(f"回滚到 {src} 后仍不健康（http={http_code()}），继续尝试下一来源")
+    if tried:
+        return "自动动作：所有回滚来源均失败，交给看门狗继续抢救"
+    return "自动动作：没有可用的回滚配置（last-good/备份都缺失）"
+
+
+# ────────────────────────────── 主流程 ──────────────────────────────
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--roll-rc", type=int, default=0)
+    ap.add_argument("--since", default=(datetime.now().strftime("%F %T")))
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--report-dir", default=REPORT_ROOT)
+    ap.add_argument("--model", default=None, help="强制单个模型 provider:model")
+    ap.add_argument("--models", default=None, help="覆盖降级链，逗号分隔")
+    ap.add_argument("--no-notify", action="store_true")
+    ap.add_argument("--print-evidence", action="store_true")
+    ap.add_argument("--feishu-check", action="store_true")
+    ap.add_argument("--auto-rollback", action="store_true")
+    args = ap.parse_args()
+
+    if args.feishu_check:
+        return feishu_check()
+
+    conf = read_conf()
+    if conf.get("AI_REVIEW", "1") == "0" and not args.print_evidence:
+        log("AI_REVIEW=0，跳过审查")
+        return 0
+
+    evidence, elapsed = collect_evidence(args.since, args.roll_rc)
+    if args.print_evidence:
+        print(evidence)
+        return 0
+
+    spec_override = args.model or args.models
+    verdict_obj, spec, attempts, usage = review(evidence, conf, spec_override)
+    if verdict_obj is None:
+        verdict_obj = heuristic_verdict(args.roll_rc, evidence)
+        log("所有模型不可用，使用规则判定")
+
+    report, state = write_report(verdict_obj, spec, attempts, evidence, args.roll_rc,
+                                 elapsed, args.report_dir)
+    log(f"verdict={state['verdict']} confidence={state['confidence']} model={spec} "
+        f"headline={state['headline']} report={report}")
+
+    # 通知
+    notify_state = ""
+    if not args.dry_run and not args.no_notify:
+        allowed = [x.strip() for x in conf.get("AI_NOTIFY", "").split(",") if x.strip()]
+        try:
+            min_conf = float(conf.get("AI_NOTIFY_MIN_CONFIDENCE", "0.6"))
+        except ValueError:
+            min_conf = 0.6
+        if state["verdict"] in allowed and float(state.get("confidence") or 0) >= min_conf:
+            lines = [f"【夜间滚包审查】{state['date']}",
+                     f"结论：{state['verdict']}（置信度 {state['confidence']}）",
+                     f"一句话：{state['headline']}"]
+            for f in (state.get("findings") or [])[:3]:
+                lines.append(f"- [{f.get('severity')}] {f.get('title')}：{str(f.get('evidence'))[:120]}")
+            for a in (state.get("actions") or [])[:2]:
+                lines.append(f"建议：{a}")
+            lines.append(f"报告：{report}")
+            res = feishu_send("\n".join(lines))
+            notify_state = f"飞书推送：{res}"
+            log(notify_state)
+            try:
+                with open(report, "a", encoding="utf-8") as fh:
+                    fh.write(f"\n## 通知\n{notify_state}\n")
+            except OSError:
+                pass
+
+    # 自动纠正（默认开启，无需人工确认）
+    auto_result = ""
+    if not args.dry_run:
+        auto_result = maybe_auto_action(verdict_obj, state, conf, args.roll_rc)
+        log(auto_result)
+        verdict_obj["auto_action"] = auto_result
+        try:
+            with open(report, "a", encoding="utf-8") as fh:
+                fh.write(f"\n## 自动纠正\n{auto_result}\n")
+            if os.geteuid() == 0:
+                os.chown(report, 1000, 1000)
+        except OSError:
+            pass
+    else:
+        log("dry-run：跳过自动纠正")
+
+    if auto_result and "失败" in auto_result:
+        return 4
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

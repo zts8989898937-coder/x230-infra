@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -u
+LOG=/home/zts/.local/state/dsh-dialogfix.log
+STORES=/home/zts/.dsh/storages
+BUCKET=/home/zts/.dsh/sessions/--home-zts-agent-share-~5BF9~8BDD--
+mkdir -p "$(dirname "$LOG")"
+log(){ echo "[$(date '+%F %T')] $*" >>"$LOG"; }
+count(){ python3 -c "
+import json
+d=json.load(open('$STORES/workspace.json'))
+w=list(d['tables']['workspaces'].values())[0]
+print(len(w['sessionIds']))" 2>/dev/null; }
+log "=== 开始修复 对话 工作区 ==="
+cp -a "$STORES/workspace.json" "$STORES/workspace.json.bak-fix-$(date +%Y%m%d-%H%M%S)" 2>/dev/null
+systemctl stop dsh-web && log "dsh-web 已停"
+cp /home/zts/.dsh/_retired/workspace.fixed-20261106.json "$STORES/workspace.json" && log "已写入 59 条会话归属 (count=$(count))"
+chown -R zts:zts "$BUCKET" && log "已修正会话目录属主"
+systemctl start dsh-web && log "dsh-web 已启动"
+for i in $(seq 1 25); do
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  [ "$code" = "401" ] && { log "健康检查通过 (第 ${i} 次)"; break; }
+  sleep 2
+done
+sleep 25
+log "启动后 store count=$(count)"
+journalctl -u dsh-web --since "-3min" --no-pager 2>/dev/null | grep -i "filtered session" | tail -5 >>"$LOG"
+log "=== 完成 ==="

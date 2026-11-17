@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""dsh-better-sidebar-safe-uuid
+
+在 dsh-better-sidebar 的客户端产物里把 3 处裸调用 crypto.randomUUID() 换成
+带降级的 __dshSafeUUID()。
+
+原因：crypto.randomUUID 只在安全上下文（https / localhost）可用；从局域网
+http://192.168.8.120:3082 访问时它是 undefined，点「侧边对话」会在
+createTab 抛 TypeError，右侧 pane 崩溃成空白。
+
+幂等：可反复运行，npm 升级覆盖后重跑即可。
+
+用法：dsh-better-sidebar-safe-uuid [--quiet] [--check]
+"""
+import os
+import sys
+
+PLUGIN_DIR = os.path.expanduser("~/.dsh/profiles/web/node_modules/dsh-better-sidebar")
+FILES = ["lib/client.js", "lib/client-registry.js"]
+HELPER_MARK = "__dshSafeUUID"
+ANCHOR = 'Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });'
+HELPER = ANCHOR + '''
+		/** dsh-safe-uuid: 非安全上下文（局域网 http）没有 crypto.randomUUID，这里做降级。 */
+		function __dshSafeUUID() {
+			try {
+				if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+			} catch (error) {}
+			return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+		}'''
+
+REPLACEMENTS = [
+    ("id: `sidechat:new-${crypto.randomUUID()}`,", "id: `sidechat:new-${__dshSafeUUID()}`,"),
+    ("id: `terminal-bottom:${crypto.randomUUID()}`,", "id: `terminal-bottom:${__dshSafeUUID()}`,"),
+    ("meta: { [INSTANCE_FIELD]: crypto.randomUUID() }", "meta: { [INSTANCE_FIELD]: __dshSafeUUID() }"),
+]
+
+
+def main() -> int:
+    quiet = "--quiet" in sys.argv
+    check_only = "--check" in sys.argv
+    changed_files, pending, errors = 0, 0, []
+
+    if not os.path.isdir(PLUGIN_DIR):
+        print(f"[safe-uuid] plugin dir missing: {PLUGIN_DIR}", file=sys.stderr)
+        return 2
+
+    for rel in FILES:
+        path = os.path.join(PLUGIN_DIR, rel)
+        if not os.path.isfile(path):
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        original = text
+
+        missing = [old for old, new in REPLACEMENTS if old in text]
+        if missing and HELPER_MARK not in text:
+            if ANCHOR not in text:
+                errors.append(f"{rel}: anchor not found, skip")
+                continue
+            text = text.replace(ANCHOR, HELPER, 1)
+
+        for old, new in REPLACEMENTS:
+            text = text.replace(old, new)
+
+        remaining = sum(1 for old, _ in REPLACEMENTS if old in text)
+        if remaining:
+            errors.append(f"{rel}: {remaining} unguarded call(s) still present")
+
+        if text != original:
+            pending += 1
+            if check_only:
+                errors.append(f"{rel}: needs patch")
+            else:
+                backup = path + ".orig-safe-uuid"
+                if not os.path.exists(backup):
+                    with open(backup, "w", encoding="utf-8") as fh:
+                        fh.write(original)
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                changed_files += 1
+
+    if check_only:
+        for e in errors:
+            print(f"[safe-uuid] {e}", file=sys.stderr)
+        if pending or errors:
+            return 1
+        if not quiet:
+            print("[safe-uuid] up to date")
+        return 0
+
+    if not quiet:
+        print(f"[safe-uuid] patched {changed_files} file(s)")
+        for e in errors:
+            print(f"[safe-uuid] {e}", file=sys.stderr)
+    return 0 if not errors else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

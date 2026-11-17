@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# x230-safe-reboot — 重启前安全闸门（检查长会话、pacman/备份锁、/boot 完整性、开机网络守护配置）
+# 用法：
+#   x230-safe-reboot --check           # 只做重启前体检，不重启（默认）
+#   x230-safe-reboot --now             # 体检通过后备份状态并执行 systemctl reboot
+#   x230-safe-reboot --now --force-sessions  # 忽略活跃 agy/codex/claude 会话强制重启
+set -uo pipefail
+
+MODE="check"
+FORCE_SESSIONS=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) MODE="check" ;;
+    --now) MODE="now" ;;
+    --force-sessions) FORCE_SESSIONS=1 ;;
+    -h|--help)
+      echo "用法: $0 [--check | --now [--force-sessions]]"
+      exit 0
+      ;;
+    *) echo "未知参数: $arg" >&2; exit 2 ;;
+  esac
+done
+
+blockers=()
+warnings=()
+
+echo "=== X230 重启前安全检查 ($(date '+%F %T')) ==="
+
+# 1. 检查正在执行的包管理或备份任务（绝对禁止打断）
+[ -e /var/lib/pacman/db.lck ] && blockers+=("存在 /var/lib/pacman/db.lck（pacman 正在运行或上次中断）")
+for proc in pacman paru restic mkinitcpio dsh-nightly-roll; do
+  if pgrep -x "$proc" >/dev/null 2>&1; then
+    blockers+=("正在运行关键任务进程: $proc")
+  fi
+done
+for svc in x230-backup.service x230-gdrive-backup.service x230-gdrive-media.service photos-sync.service; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    blockers+=("正在运行备份/同步服务: $svc")
+  fi
+done
+
+# 2. 检查活跃交互 AI 长会话（仅拦截带 pts/ 终端的交互会话；守护进程 agy-bridge/agy-warmd/codex app-server 随 systemd 自启）
+sess_hits=$(ps -eo pid,tty,etime,comm,args --no-headers | awk '$2 ~ /^pts\// && $4 ~ /^(agy|claude|codex)$/' | head -n 10 || true)
+if [ -n "$sess_hits" ]; then
+  if [ "$MODE" = "now" ] && [ "$FORCE_SESSIONS" -eq 0 ]; then
+    blockers+=("检测到活跃交互 AI 会话(pts)，默认阻止重启（确认可断请加 --force-sessions）")
+  else
+    warnings+=("检测到活跃交互 AI 会话(pts)（重启将会中断它们）")
+  fi
+  echo "[会话检查] 发现活跃交互会话:"
+  echo "$sess_hits" | sed 's/^/  /'
+fi
+
+# 3. 校验 /boot 启动关键件（防止更新内核失败或配置丢失导致重启变砖）
+for f in /boot/vmlinuz-linux /boot/initramfs-linux.img /boot/intel-ucode.img /boot/loader/entries/arch.conf; do
+  if [ ! -s "$f" ]; then
+    blockers+=("启动关键文件缺失或为空: $f")
+  fi
+done
+init_size=$(stat -c %s /boot/initramfs-linux.img 2>/dev/null || echo 0)
+if [ "$init_size" -lt 10485760 ]; then
+  blockers+=("/boot/initramfs-linux.img 体积异常过小 (${init_size}B < 10MB)")
+fi
+boot_avail_mb=$(df -Pm /boot | awk 'NR==2{print $4}')
+[ "${boot_avail_mb:-0}" -lt 150 ] && warnings+=("/boot 可用空间偏低: ${boot_avail_mb}MB")
+
+# 4. 校验开机必保配置与网络守护
+if [ "$(grep -c 'ignore' /etc/systemd/logind.conf.d/10-always-on.conf 2>/dev/null || echo 0)" -lt 2 ]; then
+  blockers+=("合盖常开配置 /etc/systemd/logind.conf.d/10-always-on.conf 异常")
+fi
+if [ ! -f /etc/systemd/system/clash-verge-service.service.d/10-boot-restore.conf ]; then
+  blockers+=("缺少 clash-verge-service 开机恢复配置 10-boot-restore.conf")
+fi
+if ! systemctl is-enabled --quiet clash-verge-service.service; then
+  blockers+=("clash-verge-service.service 未开机自启")
+fi
+if ! systemctl is-enabled --quiet boot-network-guard.service; then
+  warnings+=("boot-network-guard.service 未启用开机自启")
+fi
+if [ ! -f /etc/clash-node-pin/config ]; then
+  warnings+=("缺少 /etc/clash-node-pin/config")
+fi
+
+echo "[内核对照] 当前运行: $(uname -r) | 已安装 linux: $(pacman -Q linux | awk '{print $2}')"
+echo "[/boot 空间] 可用 ${boot_avail_mb}MB | initramfs=${init_size}B"
+[ "${#warnings[@]}" -gt 0 ] && { echo "[警告]"; printf '  - %s\n' "${warnings[@]}"; }
+
+if [ "${#blockers[@]}" -gt 0 ]; then
+  echo "[阻塞项 - 禁止重启]"
+  printf '  ! %s\n' "${blockers[@]}"
+  exit 1
+fi
+
+echo "[结果] 重启前检查通过。"
+if [ "$MODE" = "check" ]; then
+  exit 0
+fi
+
+# 5. 实际重启前快照留证
+echo "正在导出系统状态清单与 DSH 快照..."
+sudo /usr/local/bin/x230-backup-state /home/zts/backups/system-state >/dev/null || true
+sudo systemctl start dsh-snapshot.service || true
+curl -s -H "Title: X230 即将执行安全重启" -H "Tags: arrows_counterclockwise" \
+  -d "已通过安全门禁，开始重启 ($(date '+%F %T'))" "http://127.0.0.1:2586/x230-<REDACTED_TOPIC>" >/dev/null || true
+
+sync
+echo "触发重启..."
+exec sudo systemctl reboot

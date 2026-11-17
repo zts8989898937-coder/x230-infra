@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""model-budget — 把所有「按量池子」摆在一张表上看
+
+目前接三个：
+  · Antigravity / agy（Claude + GPT 共用的 3p 周池与 5 小时池，官方浮点接口）
+  · ChatGPT Plus / Codex（5 小时窗口 + 每周窗口，chatgpt.com 后台接口）
+  · GLM Coding Plan（无公开额度接口，只报告可用性）
+  · DeepSeek（无余额接口，只报告 key 是否存在）
+
+用法:
+  model-budget              # 表格 + 一句建议
+  model-budget --json       # 机器可读（dispatch/hooks 用）
+  model-budget --quiet      # 单行
+  model-budget --check gpt  # 该后端还能不能干重活：0 可以 / 10 紧张 / 20 见底 / 2 查询失败
+
+设计原则：**只读数、不做决定**。判断「该用谁」是调用方的事，这里只给数字。
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime
+
+AGY_BUDGET = os.path.expanduser("~/.local/bin/agy-budget")
+AUTH = os.path.expanduser("~/.codex/auth.json")
+CODEX_USAGE = "https://chatgpt.com/backend-api/codex/usage"
+
+
+def fmt_ts(sec: float | None) -> str:
+    if not sec:
+        return "—"
+    return datetime.fromtimestamp(time.time() + sec).strftime("%m-%d %H:%M")
+
+
+def read_agy() -> dict:
+    try:
+        p = subprocess.run([AGY_BUDGET, "--json"], capture_output=True, text=True, timeout=25)
+        if p.returncode != 0:
+            return {"ok": False, "error": (p.stderr or p.stdout).strip()[:200]}
+        d = json.loads(p.stdout)
+        return {
+            "ok": True,
+            "week_left_pct": d.get("claude_week_left_pct"),
+            "five_h_left_pct": d.get("claude_5h_left_pct"),
+            "five_h_disabled": d.get("claude_5h_disabled"),
+            "reset_in_days": d.get("reset_in_days"),
+            "reset_at": d.get("reset_at_local"),
+            "weekly_pool_units": d.get("weekly_pool_units"),
+            "daily_budget_pct": d.get("daily_budget_pct"),
+        }
+    except Exception as e:  # noqa: BLE001 - 读不到就是读不到，别炸整张表
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+def read_gpt() -> dict:
+    try:
+        with open(AUTH) as f:
+            d = json.load(f)
+        t = d.get("tokens") or {}
+        req = urllib.request.Request(
+            CODEX_USAGE,
+            headers={
+                "Authorization": f"Bearer {t.get('access_token', '')}",
+                "chatgpt-account-id": t.get("account_id", ""),
+                "User-Agent": "codex_cli_rs/0.166.0",
+                "originator": "codex_cli_rs",
+            },
+        )
+        j = json.loads(urllib.request.urlopen(req, timeout=25).read().decode())
+        r = j.get("rate_limit") or {}
+        out = {
+            "ok": True,
+            "plan": j.get("plan_type"),
+            "allowed": r.get("allowed"),
+            "five_h_used_pct": (r.get("primary_window") or {}).get("used_percent"),
+            "five_h_reset_in": (r.get("primary_window") or {}).get("reset_after_seconds"),
+            "week_used_pct": (r.get("secondary_window") or {}).get("used_percent"),
+            "week_reset_in": (r.get("secondary_window") or {}).get("reset_after_seconds"),
+        }
+        c = j.get("credits") or {}
+        if c:
+            out["credits"] = c
+        return out
+    except FileNotFoundError:
+        return {"ok": False, "error": "未登录（codex login --device-auth）"}
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)[:160]
+        if "401" in msg or "Unauthorized" in msg:
+            msg += "（token 过期：跑一次 gpt \"hi\" 刷新）"
+        return {"ok": False, "error": msg}
+
+
+def read_local_backends() -> dict:
+    secrets = os.path.expanduser("~/.config/secrets")
+    return {
+        "glm_key": os.path.exists(os.path.join(secrets, "zai-coding-plan.key")),
+        "deepseek_key": os.path.exists(os.path.join(secrets, "deepseek-api.key"))
+        or bool(os.environ.get("DEEPSEEK_API_KEY")),
+    }
+
+
+def collect() -> dict:
+    data = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M"), "agy": read_agy(), "gpt": read_gpt()}
+    data.update(read_local_backends())
+    return data
+
+
+def advice(d: dict) -> str:
+    agy, gpt = d["agy"], d["gpt"]
+    lines = []
+    if agy.get("ok"):
+        w = agy.get("week_left_pct")
+        if w is not None:
+            if w < 10:
+                lines.append(f"agy 周池只剩 {w:.1f}%：停一切 Claude/GPT-on-agy，改走 Codex")
+            elif w < 25:
+                lines.append(f"agy 周池 {w:.1f}%：只留给决策/评审，实现类走 GLM 或 Codex")
+            elif w < 50:
+                lines.append(f"agy 周池 {w:.1f}%：正常消耗，重活先给 Codex(mid) 再考虑 Opus")
+            else:
+                lines.append(f"agy 周池 {w:.1f}%：宽裕，Opus 可用但要按次计")
+    else:
+        lines.append(f"agy 读不到额度：{agy.get('error', '')[:60]}")
+    if gpt.get("ok"):
+        u = gpt.get("week_used_pct")
+        if u is not None:
+            left = 100 - float(u)
+            lines.append(f"Codex 每周窗口剩 {left:.0f}%：中档（mid）够用的活可以直接丢")
+    else:
+        lines.append(f"Codex 读不到额度：{gpt.get('error', '')[:60]}")
+    return "；".join(lines)
+
+
+def render(d: dict) -> str:
+    rows = []
+    agy, gpt = d["agy"], d["gpt"]
+    if agy.get("ok"):
+        w, f = agy.get("week_left_pct"), agy.get("five_h_left_pct")
+        rows.append(("Antigravity 3p 池", "每周", f"{w:.1f}%" if w is not None else "—", agy.get("reset_at") or "—",
+                     f"≈{agy.get('weekly_pool_units', 0) * (w or 0) / 100 / 1000:.0f}K token 当量" if w else ""))
+        rows.append(("Antigravity 3p 池", "5 小时", "停用（周池见底）" if agy.get("five_h_disabled") else
+                     (f"{f:.1f}%" if f is not None else "—"), "—", ""))
+    else:
+        rows.append(("Antigravity 3p 池", "—", "读不到", "—", agy.get("error", "")[:40]))
+    if gpt.get("ok"):
+        rows.append(("ChatGPT Plus / Codex", "5 小时",
+                     f"剩 {100 - float(gpt['five_h_used_pct']):.0f}%" if gpt.get("five_h_used_pct") is not None else "—",
+                     fmt_ts(gpt.get("five_h_reset_in")), f"plan={gpt.get('plan')}"))
+        rows.append(("ChatGPT Plus / Codex", "每周",
+                     f"剩 {100 - float(gpt['week_used_pct']):.0f}%" if gpt.get("week_used_pct") is not None else "—",
+                     fmt_ts(gpt.get("week_reset_in")), f"allowed={gpt.get('allowed')}"))
+    else:
+        rows.append(("ChatGPT Plus / Codex", "—", "读不到", "—", gpt.get("error", "")[:40]))
+    rows.append(("GLM Coding Plan", "—", "有 key" if d.get("glm_key") else "无 key", "—", "无额度接口"))
+    rows.append(("DeepSeek API", "余额", "有 key" if d.get("deepseek_key") else "无 key", "—", "无余额接口"))
+
+    head = f"模型额度池 · {d['ts']}"
+    widths = [max(len(r[i]) for r in rows + [("池", "窗口", "剩余", "重置", "备注")]) for i in range(5)]
+    line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(("池", "窗口", "剩余", "重置", "备注")))
+    out = [head, "", line, "-" * len(line)]
+    for r in rows:
+        out.append("  ".join(str(r[i]).ljust(widths[i]) for i in range(5)))
+    out += ["", "建议：" + advice(d)]
+    return "\n".join(out)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        return 0
+    d = collect()
+    if "--json" in args:
+        print(json.dumps(d, ensure_ascii=False, indent=1))
+        return 0
+    if "--quiet" in args:
+        a, g = d["agy"], d["gpt"]
+        w = a.get("week_left_pct") if a.get("ok") else None
+        u = g.get("week_used_pct") if g.get("ok") else None
+        print(f"agy周{('%.0f%%' % w) if w is not None else '?'} | codex周{('剩%.0f%%' % (100 - float(u))) if u is not None else '?'}")
+        return 0
+    if "--check" in args:
+        i = args.index("--check")
+        target = args[i + 1] if i + 1 < len(args) else "gpt"
+        if target.startswith("agy") or target.startswith("claude") or target.startswith("opus"):
+            pool = d["agy"]
+            left = pool.get("week_left_pct") if pool.get("ok") else None
+        else:
+            pool = d["gpt"]
+            left = 100 - float(pool["week_used_pct"]) if pool.get("ok") and pool.get("week_used_pct") is not None else None
+        if left is None:
+            print("查询失败", file=sys.stderr)
+            return 2
+        if left < 10:
+            print(f"{target}: 剩 {left:.1f}%，见底", file=sys.stderr)
+            return 20
+        if left < 25:
+            print(f"{target}: 剩 {left:.1f}%，紧张", file=sys.stderr)
+            return 10
+        print(f"{target}: 剩 {left:.1f}%，可用")
+        return 0
+    print(render(d))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

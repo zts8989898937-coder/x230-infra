@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""dsh-mcp-reload — 单点重载一个 MCP server，不重启 dsh-web
+
+DSH 的 patch 热加载只看内容变化。改某个 mcp 条目的 toolCallTimeoutMs（±1ms）
+就是最小内容变化，会只重载那一条 entry —— 启动新进程、重新握手、换掉工具表。
+
+用法：
+  dsh-mcp-reload --list          列出所有 mcp 条目与超时
+  dsh-mcp-reload bilibili        重载 serverName=bilibili 的那一条
+  dsh-mcp-reload --check bilibili  只判断配置是否存在
+
+坑：写完等 2-4 秒生效；别在 turn 里对正在调用的 server 重载。
+"""
+import pathlib
+import re
+import sys
+
+PATCH = pathlib.Path.home() / ".dsh/profiles/web/cordis.patch.yml"
+
+def blocks(text):
+    """返回 [(entry_id, server_name, start_line, end_line)]，只认 mcp-* 条目。"""
+    lines = text.split("\n")
+    out = []
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^(\s*)- id: (mcp-[A-Za-z0-9_-]+)$", lines[i])
+        if not m:
+            i += 1
+            continue
+        start = i
+        indent = len(m.group(1))
+        j = i + 1
+        while j < len(lines):
+            line = lines[j]
+            if line.strip() and (len(line) - len(line.lstrip())) <= indent and re.match(r"^\s*- ", line):
+                break
+            j += 1
+        name_m = re.search(r"serverName:\s*(\S+)", "\n".join(lines[start:j]))
+        out.append((m.group(2), name_m.group(1) if name_m else "?", start, j))
+        i = j
+    return out
+
+def main():
+    text = PATCH.read_text()
+    items = blocks(text)
+    if "--list" in sys.argv:
+        for eid, sname, a, b in items:
+            t = re.search(r"toolCallTimeoutMs:\s*(\d+)", "\n".join(text.split("\n")[a:b]))
+            print(f"{sname:<16} {eid:<24} timeout={t.group(1) if t else '-'}ms")
+        return 0
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if not args:
+        print("用法: dsh-mcp-reload <serverName> | --list", file=sys.stderr)
+        return 2
+    want = args[0]
+    hit = [x for x in items if x[1] == want or x[0] == f"mcp-{want}"]
+    if not hit:
+        print(f"没找到 MCP server: {want}（--list 看可选）", file=sys.stderr)
+        return 1
+    eid, sname, a, b = hit[0]
+    lines = text.split("\n")
+    seg = "\n".join(lines[a:b])
+    m = re.search(r"(\s*)toolCallTimeoutMs:\s*(\d+)", seg)
+    if m:
+        new = int(m.group(2)) + 1
+        seg2 = seg.replace(m.group(0), f"{m.group(1)}toolCallTimeoutMs: {new}", 1)
+    else:
+        # 没有该键：插在 serverName 之后
+        seg2 = re.sub(r"(\n(\s*)serverName: \S+)", r"\1\n\2toolCallTimeoutMs: 45001", seg, count=1)
+        new = 45001
+    if "--check" in sys.argv:
+        print(f"OK {eid} ({sname})")
+        return 0
+    lines[a:b] = seg2.split("\n")
+    PATCH.write_text("\n".join(lines))
+    print(f"已触发重载 {eid}（{sname}）→ toolCallTimeoutMs {new}；2-4 秒后生效")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

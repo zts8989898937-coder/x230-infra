@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# gpt — Codex CLI 绑 ChatGPT Plus 的封装
+# 默认: gpt-6.1-sol + reasoning medium（只读沙箱）
+#   --write   放开写权限（workspace-write）
+#   --high    高推理档（gpt-high profile）
+#   --search  开联网搜索
+set -uo pipefail
+profile=gpt; sandbox=read-only; search=(); args=()
+for a in "$@"; do
+  case "$a" in
+    --write) sandbox=workspace-write ;;
+    --high)  profile=gpt-high ;;
+    --search) search=(--search) ;;
+    *) args+=("$a") ;;
+  esac
+done
+exec codex ${search[@]+"${search[@]}"} -p "$profile" exec --skip-git-repo-check --sandbox "$sandbox" ${args[@]+"${args[@]}"} </dev/null

@@ -1,0 +1,9 @@
+[Unit]
+Description=LAN socket for dsh-web proxy
+
+[Socket]
+ListenStream=192.168.8.120:3082
+NoDelay=true
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,5 @@
+[Unit]
+Description=DSH 统一项目记忆：新工作区自动软链 KEY
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dsh-key-link

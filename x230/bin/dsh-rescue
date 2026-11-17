@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# dsh-rescue — 会杀掉 dsh-web 的操作，用它在「断线后」自救并把恢复信息推到手机
+#
+# 设计要点：必须由 systemd 拉起（systemd-run），不能是当前会话的子进程，
+#           否则 dsh-web 一停，救援脚本跟着死，就没人给你发消息了。
+#
+# 用法:
+#   dsh-restart-safe             # 重启 dsh-web 并推送恢复信息（会结束当前会话）
+#   dsh-rescue --dry-run         # 只演练通知，不重启（安全测试）
+#   dsh-rescue --with-token      # 推送里附带新 token（注意：token 能直接登录 WebUI）
+set -u
+
+URL="http://100.110.77.111:3080"
+LAN_URL="http://192.168.8.120:3081"
+NTFY="http://127.0.0.1:2586/x230-<REDACTED_TOPIC>"
+SSH_HOST="zts@100.110.77.111"
+PHP_LOG=/home/zts/.local/state/dsh-rescue.log
+mkdir -p "$(dirname "$PHP_LOG")" 2>/dev/null
+
+DRY=0; WITH_TOKEN=0
+for a in "$@"; do
+  case "$a" in
+    --dry-run) DRY=1 ;;
+    --with-token) WITH_TOKEN=1 ;;
+  esac
+done
+
+log() { echo "[$(date '+%F %T')] $*" >> "$PHP_LOG"; }
+ntfy() {
+  [ -f /etc/dsh-ntfy-off ] && { log "ntfy suppressed: $1"; return 0; }
+  curl -s -m 6 -H "Title: $1" -H "Priority: $2" -d "$3" "$NTFY" >/dev/null 2>&1 \
+    && log "ntfy sent: $1" || log "ntfy failed: $1"
+}
+
+TOKEN_CMD='sudo journalctl -u dsh-web --no-pager -n 100 | grep -oE "token=[A-Za-z0-9_-]+" | tail -1'
+
+if [ "$DRY" = 1 ]; then
+  ntfy "DSH 自救演练" default "这是一条演练通知，没有重启任何服务。
+访问: $URL
+局域网: $LAN_URL
+SSH: ssh $SSH_HOST
+取 token: $TOKEN_CMD"
+  log "dry-run done"
+  exit 0
+fi
+
+log "rescue start"
+ntfy "DSH 正在重启" high "本次操作会短暂中断 WebUI，最多等 90 秒。
+如果 2 分钟后没有收到「已恢复」，请手动 SSH 上去看：ssh $SSH_HOST"
+
+# 1) 重启（可能杀掉调用者自己的会话，属预期）
+systemctl restart dsh-web >/dev/null 2>&1
+log "restart issued"
+
+# 2) 等待健康（401 = 正常未登录）
+CODE=000
+for i in $(seq 1 90); do
+  CODE=$(curl -s -o /dev/null -m 2 -w '%{http_code}' "$URL/" 2>/dev/null)
+  case "$CODE" in 401|200|302) break ;; esac
+  sleep 1
+done
+log "health=$CODE after $i s"
+
+# 3) 结果通知
+if [ "$CODE" = "401" ] || [ "$CODE" = "200" ] || [ "$CODE" = "302" ]; then
+  TOKEN=""
+  [ "$WITH_TOKEN" = 1 ] && TOKEN=$(bash -c "$TOKEN_CMD" 2>/dev/null | cut -d= -f2)
+  MSG="状态: 已恢复 (HTTP $CODE)
+WebUI: $URL
+局域网: $LAN_URL
+SSH: ssh $SSH_HOST
+取 token: $TOKEN_CMD"
+  [ -n "$TOKEN" ] && MSG="$MSG
+直达(含token): $URL/?token=$TOKEN"
+  ntfy "DSH 已恢复 ✅" default "$MSG"
+else
+  J=$(journalctl -u dsh-web -n 25 --no-pager 2>/dev/null | tail -12)
+  ntfy "DSH 恢复失败 ❌" urgent "HTTP=$CODE，服务没起来。
+SSH: ssh $SSH_HOST
+最近日志:
+$J"
+  log "rescue failed code=$CODE"
+  exit 1
+fi
+log "rescue ok"

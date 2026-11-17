@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""dsh-check-profile — 体检 profile 的可重建性（只读）
+
+2026-11-09 四域审计 P2：「插件构成能装回来吗」没人验证过。本脚本回答三件事：
+1) 每个依赖是 registry 版本、file:、还是 link:（link: 指本地源码，换机器就丢）
+2) 本地依赖目录是否在 git 里（有 .git 才能重建；没有就是「一次性产物」）
+3) package.json / lockfile / 实际安装三者是否一致
+
+用法：dsh-check-profile [--json]
+退出码：0 全部可重建 / 1 有不可重建项
+"""
+import json
+import pathlib
+import subprocess
+import sys
+
+PROFILE = pathlib.Path.home() / ".dsh/profiles/web"
+PKG = PROFILE / "package.json"
+
+def sh(cmd, cwd=None):
+    try:
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=20).stdout.strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+def main():
+    pkg = json.loads(PKG.read_text())
+    deps = pkg.get("dependencies", {})
+    rows = []
+    local_count = 0
+    for name, spec in sorted(deps.items()):
+        kind = "registry"
+        path = None
+        if spec.startswith("file:") or spec.startswith("link:"):
+            kind = spec.split(":", 1)[0]
+            path = pathlib.Path(spec.split(":", 1)[1]).expanduser()
+            local_count += 1
+        in_git = bool(path and (path / ".git").exists())
+        if path and not path.exists():
+            state = "目录不存在"
+        elif kind in ("file", "link"):
+            state = "git ✓" if in_git else "无 git（不可重建）"
+        else:
+            state = "ok"
+        rows.append({"name": name, "spec": spec, "kind": kind, "path": str(path or ""), "state": state})
+    # 一致性：node_modules 里是否都在，lockfile 是否覆盖
+    nm = PROFILE / "node_modules"
+    missing = [r["name"] for r in rows if not (nm / r["name"]).exists()]
+    lock = PROFILE / "pnpm-lock.yaml"
+    lock_ok = lock.exists() and all(r["name"] in lock.read_text() for r in rows if r["kind"] == "registry")
+    out = {
+        "profile": str(PROFILE),
+        "deps": len(rows),
+        "local": local_count,
+        "unreproducible": [r["name"] for r in rows if r["state"] == "无 git（不可重建）"],
+        "missing_in_node_modules": missing,
+        "lockfile_covers_registry": lock_ok,
+        "rows": rows,
+    }
+    if "--json" in sys.argv:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(f"profile: {out['profile']}")
+        print(f"依赖 {out['deps']} 个，其中本地 {local_count} 个")
+        for r in rows:
+            if r["kind"] != "registry":
+                print(f"  {r['kind']:<5} {r['name']:<34} {r['state']:<14} {r['path']}")
+        print(f"lockfile 覆盖 registry: {'是' if lock_ok else '否'}")
+        if missing:
+            print("node_modules 缺失: " + ", ".join(missing))
+        if out["unreproducible"]:
+            print("不可重建: " + ", ".join(out["unreproducible"]))
+        else:
+            print("结论：全部可重建")
+    bad = bool(out["unreproducible"] or missing or not lock_ok)
+    return 1 if bad else 0
+
+if __name__ == "__main__":
+    sys.exit(main())

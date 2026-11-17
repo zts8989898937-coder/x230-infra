@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# 全量同步 工作产出 → Google Drive（与大目录同构；put-output 已做单文件同步，这里兜底）
+# 敏感件（cookie/token/secret/凭据包/config 备份）由 exclude-from 挡在云外，见下。
+set -uo pipefail
+LOCAL=/home/zts/agent-share/工作产出
+REMOTE=gdrive:工作产出
+EXCLUDE=$HOME/.config/rclone/sensitive-exclude.txt
+LOG=/home/zts/.local/state/put-output-sync.log
+mkdir -p "$(dirname "$LOG")"
+{
+  echo "=== $(date -Is) start"
+  rclone copy "$LOCAL" "$REMOTE" --transfers 4 --checkers 8 --stats-one-line --stats 120s \
+    --exclude-from "$EXCLUDE"
+  rclone copyto "$LOCAL/INDEX.md" "$REMOTE/INDEX.md" 2>/dev/null || true
+  echo "=== $(date -Is) done rc=$?"
+} >>"$LOG" 2>&1

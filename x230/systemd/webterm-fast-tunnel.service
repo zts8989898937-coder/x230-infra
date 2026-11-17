@@ -1,0 +1,19 @@
+[Unit]
+Description=Low latency HTTPS web terminal reverse tunnel
+After=network-online.target webterm-fast-proxy.service
+Wants=network-online.target webterm-fast-proxy.service
+StartLimitIntervalSec=0
+
+[Service]
+User=zts
+LoadCredential=auth:/home/zts/.config/secrets/webterm-transport.json
+ExecStart=/usr/bin/ssh -CNT -o BatchMode=yes -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o ConnectTimeout=15 -o "ProxyCommand=/usr/bin/python3 /usr/local/lib/webterm-transport/client.py %d/auth 17992" -R 127.0.0.1:19034:127.0.0.1:3902 hk
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

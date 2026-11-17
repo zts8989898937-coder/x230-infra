@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# dsh-nightly-roll-core — 每日 04:00「滚包」核心：预检 → 备份 → 重启 → 健康检查 → 回滚
+#
+# 2026-11-08 v3：
+#   - last-good 改为「上一次健康通过」的配置：健康检查通过后才 promote，失败时回滚到它。
+#     （v2 在重启前就把当前配置写成 last-good，回滚等于原样复制，形同虚设。）
+#   - 新增 candidate 快照、失败配置留证、history.jsonl（供 AI 审查看趋势）。
+#   - 新增 --dry-run：只跑预检/备份/快照，不重启。
+#   - 审查由包装脚本 dsh-nightly-roll 在核心退出后调用 dsh-roll-ai-review 完成。
+set -uo pipefail
+
+URL="${DSH_ROLL_URL:-http://100.110.77.111:3080}"
+STATE_DIR="${DSH_ROLL_STATE_DIR:-/var/lib/dsh-roll}"
+LOG="${DSH_ROLL_LOG:-/var/log/dsh-nightly-roll.log}"
+PROFILE="/home/zts/.dsh/profiles/web"
+PATCH="${DSH_ROLL_PATCH:-$PROFILE/cordis.patch.yml}"
+BACKUP_ROOT="${DSH_ROLL_BACKUP_ROOT:-/home/zts/agent-share/工作产出/05-备份归档}"
+RESTART_CMD="${DSH_ROLL_RESTART:-systemctl restart dsh-web}"
+GOOD="$STATE_DIR/last-good-cordis.patch.yml"
+CAND="$STATE_DIR/candidate-cordis.patch.yml"
+KEEP_DAYS=14
+DRY=0
+[ "${1:-}" = "--dry-run" ] && DRY=1
+
+# 防止误跑：完整流程只能由 dsh-nightly-roll 包装调用，手工测试请用 --dry-run
+if [ "${DSH_ROLL_FROM_WRAPPER:-0}" != "1" ] && [ "$DRY" != 1 ]; then
+  echo "[roll-core] 拒绝直接运行（会重启 dsh-web）：请用 /usr/local/bin/dsh-nightly-roll，或加 --dry-run" >&2
+  exit 9
+fi
+
+mkdir -p "$STATE_DIR" "$BACKUP_ROOT" 2>/dev/null
+log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG" >/dev/null; echo "[$(date '+%F %T')] $*"; }
+
+as_zts() { runuser -u zts -- env HOME=/home/zts bash -c "$1"; }
+
+health() {
+  local code=000
+  if [ -n "${DSH_ROLL_HEALTH_CMD:-}" ]; then
+    code=$(eval "$DSH_ROLL_HEALTH_CMD" 2>/dev/null || echo 000)
+    case "$code" in 401|200|302) echo "$code"; return 0 ;; *) echo "$code"; return 1 ;; esac
+  fi
+  for _ in $(seq 1 60); do
+    code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$URL/" 2>/dev/null || echo 000)
+    case "$code" in 401|200|302) echo "$code"; return 0 ;; esac
+    sleep 2
+  done
+  echo "$code"; return 1
+}
+
+latest_backup_patch() {
+  local today d
+  today=$(date +%Y%m%d)
+  for d in $(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | grep -E '^[0-9]{8}$' | sort -r); do
+    [ "$d" = "$today" ] && continue
+    [ -f "$BACKUP_ROOT/$d/cordis.patch.yml" ] && { echo "$BACKUP_ROOT/$d/cordis.patch.yml"; return 0; }
+  done
+  return 1
+}
+
+precheck() {
+  if [ -n "${DSH_ROLL_PRECHECK_CMD:-}" ]; then eval "$DSH_ROLL_PRECHECK_CMD" >/dev/null 2>&1; return $?; fi
+  as_zts 'cd /tmp && dsh --profile web --dump-config >/dev/null 2>/tmp/dsh-roll-precheck.err'
+}
+
+try_repair() {
+  local src
+  for src in "$GOOD" "$(latest_backup_patch)"; do
+    [ -n "$src" ] && [ -f "$src" ] || continue
+    cmp -s "$src" "$PATCH" && continue
+    cp -f "$src" "$PATCH"
+    chown zts:zts "$PATCH" 2>/dev/null
+    if precheck; then log "precheck repaired from $src"; return 0; fi
+  done
+  return 1
+}
+
+config_errors() {
+  journalctl -u dsh-web --since '-5 min' --no-pager 2>/dev/null \
+    | grep -E 'entry did not activate|ValidationError' | tail -3 | tr '\n' ' '
+}
+
+SINCE=$(date '+%F %T')
+START=$(date +%s)
+CODE=""; PID=""; RSS=""; RSS_BEFORE=""; ROLLBACK="none"
+
+write_meta() {
+  local rc=$1
+  local dur=$(( $(date +%s) - START ))
+  local dry=false
+  [ "$DRY" = 1 ] && dry=true
+  local line
+  line=$(printf '{"date":"%s","since":"%s","rc":%d,"http":"%s","pid":"%s","rss_before_kb":%s,"rss_after_kb":%s,"rollback":"%s","duration_s":%d,"dry_run":%s}' \
+    "$(date +%F)" "$SINCE" "$rc" "${CODE:-}" "${PID:-}" "${RSS_BEFORE:-0}" "${RSS:-0}" "$ROLLBACK" "$dur" "$dry")
+  printf '%s\n' "$line" > "$STATE_DIR/last-roll-context.json"
+  printf '%s\n' "$line" >> "$STATE_DIR/history.jsonl"
+  tail -n 400 "$STATE_DIR/history.jsonl" > "$STATE_DIR/history.tmp" 2>/dev/null \
+    && mv "$STATE_DIR/history.tmp" "$STATE_DIR/history.jsonl"
+  chown zts:zts "$STATE_DIR/last-roll-context.json" "$STATE_DIR/history.jsonl" 2>/dev/null
+  chmod 644 "$STATE_DIR/last-roll-context.json" "$STATE_DIR/history.jsonl" 2>/dev/null
+}
+
+finish() {
+  local rc=$1
+  write_meta "$rc"
+  log "=== nightly roll end rc=$rc ==="
+  exit "$rc"
+}
+
+log "=== nightly roll start ==="
+
+# 1) 预检：坏了先自动修（last-good → 最近备份），修不好也照滚，交给健康检查与看门狗兜底
+PRE_OK=0
+if ! precheck; then
+  ERR=$(tail -3 /tmp/dsh-roll-precheck.err 2>/dev/null | tr '\n' ' ')
+  log "precheck FAILED: $ERR — 尝试自动修复"
+  if try_repair; then
+    PRE_OK=1
+    log "precheck ok (auto-repaired)"
+  else
+    log "precheck still FAILED after repair — 继续按计划滚包，失败由健康检查/看门狗接管"
+  fi
+else
+  PRE_OK=1
+  log "precheck ok"
+fi
+
+# 2) 备份
+DAY=$(date +%Y%m%d)
+DEST="$BACKUP_ROOT/$DAY"
+mkdir -p "$DEST"
+cp -f "$PATCH" "$DEST/cordis.patch.yml" 2>/dev/null
+cp -f "$PROFILE/package.json" "$DEST/package.json" 2>/dev/null
+cp -f "$PROFILE/pnpm-lock.yaml" "$DEST/pnpm-lock.yaml" 2>/dev/null
+chown -R zts:zts "$DEST" "$BACKUP_ROOT" 2>/dev/null
+chmod 700 "$DEST" "$STATE_DIR" 2>/dev/null
+chmod 600 "$DEST"/* 2>/dev/null
+find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +$KEEP_DAYS -exec rm -rf {} + 2>/dev/null
+log "backup -> $DEST"
+
+# 3) 本次候选快照（last-good 只在健康通过后 promote）
+cp -f "$PATCH" "$STATE_DIR/candidate-cordis.patch.yml"
+chmod 600 "$STATE_DIR/candidate-cordis.patch.yml" 2>/dev/null
+log "candidate sha=$(sha256sum "$STATE_DIR/candidate-cordis.patch.yml" | cut -c1-16) last-good sha=$([ -f "$STATE_DIR/last-good-cordis.patch.yml" ] && sha256sum "$STATE_DIR/last-good-cordis.patch.yml" | cut -c1-16 || echo missing)"
+
+if [ "$DRY" = 1 ]; then
+  log "dry-run: 跳过重启与回滚"
+  finish 0
+fi
+
+# 4) 重启 + 健康检查
+RSS_BEFORE=$(ps -o rss= -p "$(systemctl show dsh-web -p MainPID --value)" 2>/dev/null | tr -d ' ')
+$RESTART_CMD
+if CODE=$(health); then
+  sleep 3
+  PID=$(systemctl show dsh-web -p MainPID --value)
+  RSS=$(ps -o rss= -p "$PID" 2>/dev/null | tr -d ' ')
+  CONF_ERR=$(config_errors)
+  log "restart ok http=$CODE pid=$PID rss=${RSS}KB (before=${RSS_BEFORE}KB)"
+  if [ "$PRE_OK" = 1 ]; then
+    cp -f "$STATE_DIR/candidate-cordis.patch.yml" "$STATE_DIR/last-good-cordis.patch.yml"
+    chmod 600 "$STATE_DIR/last-good-cordis.patch.yml" 2>/dev/null
+    log "promoted candidate -> last-good"
+  else
+    log "precheck 未通过，本次不推广 last-good（避免把坏配置当基线）"
+  fi
+  [ -n "$CONF_ERR" ] && log "WARNING: entry not activated: $CONF_ERR"
+  finish 0
+fi
+
+# 5) 回滚：优先恢复到上次健康配置；没有可回滚差异就再重启一次
+cp -f "$CAND" "$STATE_DIR/failed-$(date +%Y%m%d-%H%M%S)-cordis.patch.yml" 2>/dev/null
+find "$STATE_DIR" -name 'failed-*-cordis.patch.yml' -mtime +30 -delete 2>/dev/null
+
+if [ -f "$GOOD" ] && ! cmp -s "$GOOD" "$CAND"; then
+  log "restart FAILED http=$CODE, rolling back last-good config"
+  cp -f "$GOOD" "$PATCH"
+  chown zts:zts "$PATCH" 2>/dev/null
+  ROLLBACK="config"
+  $RESTART_CMD
+  if CODE2=$(health); then
+    CODE="$CODE2"
+    log "rollback ok http=$CODE2"
+    finish 1
+  fi
+  log "rollback FAILED http=$CODE2"
+  ARCH=$(latest_backup_patch)
+  if [ -n "$ARCH" ] && ! cmp -s "$ARCH" "$CAND"; then
+    log "trying archive $ARCH"
+    cp -f "$ARCH" "$PATCH"
+    chown zts:zts "$PATCH" 2>/dev/null
+    $RESTART_CMD
+    if CODE2=$(health); then
+      CODE="$CODE2"
+      ROLLBACK="archive"
+      log "archive rollback ok http=$CODE2"
+      finish 1
+    fi
+    log "archive rollback FAILED http=$CODE2"
+  fi
+  ROLLBACK="failed"
+  finish 3
+fi
+
+log "restart FAILED http=$CODE, last-good 与候选相同（或缺失），再重启一次"
+ROLLBACK="restart"
+$RESTART_CMD
+if CODE2=$(health); then
+  CODE="$CODE2"
+  log "second restart ok http=$CODE2"
+  finish 1
+fi
+log "second restart FAILED http=$CODE2"
+
+# 5b) 再试最近备份
+ARCH=$(latest_backup_patch)
+if [ -n "$ARCH" ] && ! cmp -s "$ARCH" "$CAND"; then
+  log "trying archive $ARCH"
+  cp -f "$ARCH" "$PATCH"
+  chown zts:zts "$PATCH" 2>/dev/null
+  $RESTART_CMD
+  if CODE2=$(health); then
+    CODE="$CODE2"
+    ROLLBACK="archive"
+    log "archive rollback ok http=$CODE2"
+    finish 1
+  fi
+  log "archive rollback FAILED http=$CODE2"
+fi
+
+# 6) 彻底失败
+ROLLBACK="failed"
+log "nightly roll FAILED permanently"
+journalctl -u dsh-web -n 20 --no-pager 2>/dev/null | tail -10 >> "$LOG"
+finish 3

@@ -1,0 +1,10 @@
+[Unit]
+Description=DeepSeek-driven Arch Linux unattended safe rolling upgrade
+After=network-online.target boot-network-guard.service
+Wants=boot-network-guard.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arch-auto-roll
+TimeoutStartSec=2400
+Nice=5

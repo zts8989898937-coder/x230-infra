@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec node /home/zts/agent-share/对话/tools/ui-shot.mjs "$@"

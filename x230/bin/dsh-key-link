@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# dsh-key-link — 新工作区自动继承统一的项目记忆
+# 背景：项目 KEY 按 sha1(cwd) 分目录，新开工作区会得到一个空记忆。
+# 做法：统一记忆放 ce8898c9c2df/KEY.md（Mission），其它任何目录缺 KEY.md 就软链过来。
+# 由 dsh-key-link.timer 每 5 分钟兜底；也可手动跑。
+set -u
+ROOT=/home/zts/.dsh/memories/projects
+SRC=$ROOT/ce8898c9c2df/KEY.md
+[ -f "$SRC" ] || exit 0
+for d in "$ROOT"/*/; do
+  d=${d%/}
+  [ "$d" = "$ROOT/ce8898c9c2df" ] && continue
+  [ -e "$d/KEY.md" ] && continue
+  ln -sfn ../ce8898c9c2df/KEY.md "$d/KEY.md" 2>/dev/null \
+    && logger -t dsh-key-link "linked $(basename "$d")" 2>/dev/null || true
+done

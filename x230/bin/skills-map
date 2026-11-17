@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""skills-map — 技能库按「域」重排：分类、发现重叠、指出缺口
+
+用法：
+  skills-map                # 终端表格
+  skills-map --json         # 机器可读
+  skills-map --write FILE   # 写 Markdown 索引
+
+分类靠关键词打分（权重从高到低），每个技能取最高分域；平局归「通用」。
+缺口检测：内置理想域清单（视觉/文档/代码/调研/自动化/视频/3D/记忆），缺哪个报哪个。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from pathlib import Path
+
+SKILL_DIRS = [Path.home() / ".agents" / "skills", Path.home() / ".gemini" / "config" / "skills"]
+
+DOMAINS = {
+    "视觉设计": ["海报", "视觉", "设计", "配色", "主题", "插画", "封面", "UI", "版式", "字体"],
+    "文档办公": ["Word", "docx", "PDF", "PPT", "幻灯片", "表格", "xlsx", "文档", "报告", "信函"],
+    "代码工程": ["代码", "测试", "TDD", "调试", "bug", "评审", "review", "重构", "脚本", "仓库"],
+    "调研信息": ["调研", "搜索", "信息", "资料", "检索", "论文", "阅读"],
+    "自动化": ["CLI", "终端", "agent", "自动化", "定时", "管道", "调用"],
+    "视频动效": ["视频", "动效", "动画", "剪辑", "Remotion", "渲染", "帧"],
+    "3D建模": ["3D", "建模", "Blender", "网格", "材质", "渲染"],
+    "记忆元认知": ["记忆", "整理", "归档", "技能", "元"],
+}
+IDEAL = ["视觉设计", "文档办公", "代码工程", "调研信息", "自动化", "视频动效", "3D建模", "记忆元认知"]
+
+
+def parse_frontmatter(text: str) -> dict:
+    if not text.startswith("---"):
+        return {}
+    end = text.find("\n---", 3)
+    if end < 0:
+        return {}
+    block = text[3:end]
+    out: dict[str, str] = {}
+    cur_key = None
+    for line in block.splitlines():
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if m:
+            k, v = m.group(1), m.group(2).strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                v = v[1:-1]
+            # YAML 折叠/字面块：>-, |, >、|- 都表示后面跟多行
+            if v in (">-", ">", "|", "|-", ">+", "|+"):
+                v = ""
+            out[k] = v
+            cur_key = k
+        elif cur_key and line.strip() and line.startswith((" ", "\t")):
+            out[cur_key] = (out[cur_key] + " " + line.strip()).strip()
+    return out
+
+
+def classify(text: str) -> tuple[str, dict]:
+    scores = {}
+    for dom, kws in DOMAINS.items():
+        s = sum(text.count(k) for k in kws)
+        if s:
+            scores[dom] = s
+    if not scores:
+        return "通用", {}
+    best = max(scores, key=lambda d: scores[d])
+    return best, scores
+
+
+def load() -> list[dict]:
+    seen, rows = set(), []
+    for d in SKILL_DIRS:
+        if not d.exists():
+            continue
+        for p in sorted(d.glob("*/SKILL.md")):
+            name = p.parent.name
+            if name in seen:
+                continue
+            fm = parse_frontmatter(p.read_text(errors="ignore"))
+            desc = fm.get("description", "")
+            dom, scores = classify(f"{name} {desc}")
+            rows.append(
+                {
+                    "name": name,
+                    "domain": dom,
+                    "scores": scores,
+                    "description": desc,
+                    "path": str(p),
+                    "disabled": "disable-model-invocation" in p.read_text(errors="ignore")[:600],
+                }
+            )
+            seen.add(name)
+    return rows
+
+
+def md(rows: list[dict]) -> str:
+    lines = ["# 技能库分域索引", "", f"共 {len(rows)} 个技能，按主域分组；同域内按名字排序。", ""]
+    for dom in IDEAL + ["通用"]:
+        group = [r for r in rows if r["domain"] == dom]
+        if not group:
+            lines.append(f"## {dom}（缺口）")
+            lines.append("")
+            lines.append("_当前没有技能覆盖这个域。_")
+            lines.append("")
+            continue
+        lines.append(f"## {dom}（{len(group)}）")
+        for r in group:
+            flag = " · 不自动触发" if r["disabled"] else ""
+            lines.append(f"- **{r['name']}**{flag} — {r['description']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--write")
+    a = ap.parse_args()
+    rows = load()
+    if a.json:
+        print(json.dumps({"skills": rows, "gaps": [d for d in IDEAL if not any(r["domain"] == d for r in rows)]}, ensure_ascii=False, indent=2))
+        return 0
+    text = md(rows)
+    if a.write:
+        Path(a.write).write_text(text, encoding="utf-8")
+        print(f"wrote {a.write} ({len(rows)} skills)")
+        return 0
+    # 终端：紧凑表格
+    for dom in IDEAL + ["通用"]:
+        group = [r for r in rows if r["domain"] == dom]
+        tag = "缺口" if not group else f"{len(group)}"
+        print(f"\n[{dom}] {tag}")
+        for r in group:
+            print(f"  - {r['name']:<28} {r['description'][:52]}")
+    gaps = [d for d in IDEAL if not any(r["domain"] == d for r in rows)]
+    print(f"\n缺口域：{', '.join(gaps) if gaps else '无'}  · 共 {len(rows)} 个技能")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

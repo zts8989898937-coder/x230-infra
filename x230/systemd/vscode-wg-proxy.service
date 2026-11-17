@@ -1,0 +1,12 @@
+[Unit]
+Description=WireGuard proxy for VS Code Web
+Requires=vscode-wg-proxy.socket
+After=vscode-wg-proxy.socket vscode-web.service wg-quick@wg0.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:8443
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

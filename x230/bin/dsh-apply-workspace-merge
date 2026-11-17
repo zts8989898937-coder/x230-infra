@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -u
+STORE=/home/zts/.dsh/storages/workspace.json
+NEW=/tmp/workspace.new.json
+LOG=/home/zts/.local/state/dsh-ws-merge.log
+TS=$(date +%Y%m%d-%H%M%S)
+log(){ echo "[$(date '+%F %T')] $*" >>"$LOG"; }
+mkdir -p "$(dirname "$LOG")"
+log "=== 开始 workspace 合并 ($TS) ==="
+[ -f "$STORE" ] || { log "缺少 $STORE，放弃"; exit 1; }
+[ -f "$NEW" ]   || { log "缺少 $NEW，放弃"; exit 1; }
+python3 -c "import json;d=json.load(open('$NEW'));assert d['unit']['version']==2 and 'workspaces' in d['tables']" \
+  || { log "新文件校验失败，放弃"; exit 1; }
+cp -a "$STORE" "$STORE.bak-$TS" && log "已备份 $STORE.bak-$TS"
+systemctl stop dsh-web && log "dsh-web 已停"
+cp "$NEW" "$STORE" && log "已写入合并版 workspace.json"
+systemctl start dsh-web && log "dsh-web 已启动"
+for i in $(seq 1 20); do
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  [ "$code" = "401" ] && { log "健康检查通过 (401, 第 ${i} 次)"; log "=== 完成 ==="; exit 0; }
+  sleep 2
+done
+log "健康检查失败，回滚"
+cp -a "$STORE.bak-$TS" "$STORE"
+systemctl restart dsh-web
+log "=== 已回滚 ==="
+exit 1

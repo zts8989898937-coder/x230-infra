@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync phone photos to Google Drive
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=zts
+Environment=HOME=/home/zts
+ExecStart=/usr/local/bin/photos-sync
+TimeoutStartSec=12h
+Nice=10
+IOSchedulingClass=idle

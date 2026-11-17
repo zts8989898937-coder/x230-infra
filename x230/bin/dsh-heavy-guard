@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# dsh-heavy-guard — 本地重活（Blender / ffmpeg / 编译）的闸门与看门狗
+#
+# 起因（2026-11-09）：一个 21 万面的 EEVEE 渲染在本机满核跑了 426 秒，
+# 机身 85°C / 风扇 5373 转，而没有任何人盯着。这台是 2C4T 的老 X230，
+# 不是渲染农场 —— 重活要么限流跑，要么根本不该在本机跑。
+#
+# 用法:
+#   dsh-heavy-guard -- blender -b scene.blend -f 1
+#   dsh-heavy-guard --max-sec 180 --max-temp 78 --max-load 3.5 -- ffmpeg -i in.mp4 out.mp4
+#   dsh-heavy-guard --check            # 只体检，不跑（rc: 0 可跑 / 75 现在不该跑）
+#
+# 行为:
+#   1) 开跑前体检：1 分钟负载 / 最高核心温度 / 可用内存，任一超阈值 → 拒绝（rc 75）
+#   2) 跑的时候降优先级（nice 19 + ionice idle），并每 5 秒采样；连续 2 次越界 → 杀掉子进程（rc 76）
+#   3) 超时（默认 300 秒）硬杀（rc 124）
+#   4) 全程写 ~/.local/state/heavy-guard.log，事后能查「谁在什么时候烧了多少秒、峰值多少度」
+set -uo pipefail
+
+MAX_SEC=300
+MAX_TEMP=80
+MAX_LOAD=3.0
+MAX_SWAP_PCT=60
+CHECK_ONLY=0
+LOG="$HOME/.local/state/heavy-guard.log"
+mkdir -p "$(dirname "$LOG")"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --max-sec) MAX_SEC=$2; shift 2 ;;
+    --max-temp) MAX_TEMP=$2; shift 2 ;;
+    --max-load) MAX_LOAD=$2; shift 2 ;;
+    --check) CHECK_ONLY=1; shift ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"; }
+
+load1=$(awk '{print $1}' /proc/loadavg)
+temp=$(for f in /sys/class/thermal/thermal_zone*/temp; do
+         [ -r "$f" ] && echo $(( $(cat "$f") / 1000 ))
+       done | sort -n | tail -1)
+temp=${temp:-0}
+mem_avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo)
+swap_used=$(awk '/SwapTotal/{t=$2} /SwapFree/{f=$2} END{if(t>0) printf "%d", (t-f)*100/t; else print 0}' /proc/meminfo)
+
+verdict="ok"
+why=""
+awk -v l="$load1" -v m="$MAX_LOAD" 'BEGIN{exit !(l>m)}' && verdict="busy" && why="负载 ${load1} > ${MAX_LOAD}"
+if [ "$temp" -ge "$MAX_TEMP" ]; then verdict="hot"; why="${why:+$why；}温度 ${temp}°C ≥ ${MAX_TEMP}°C"; fi
+if [ "$swap_used" -ge "$MAX_SWAP_PCT" ]; then verdict="swap"; why="${why:+$why；}swap 已用 ${swap_used}%"; fi
+
+if [ "$CHECK_ONLY" = 1 ]; then
+  echo "load1=${load1} temp=${temp}°C mem_avail=${mem_avail}MB swap=${swap_used}% → ${verdict}${why:+（$why）}"
+  [ "$verdict" = "ok" ] && exit 0 || exit 75
+fi
+
+if [ $# -eq 0 ]; then
+  echo "用法: dsh-heavy-guard [--max-sec N] [--max-temp C] [--max-load L] -- <命令...>" >&2
+  exit 2
+fi
+
+if [ "$verdict" != "ok" ]; then
+  log "REFUSE ${why} :: $*"
+  echo "[heavy-guard] 拒绝启动：$why" >&2
+  echo "[heavy-guard] 这台机器现在不该加重活（--check 看详情）；改走 Colab 或夜间队列。" >&2
+  exit 75
+fi
+
+log "START load=${load1} temp=${temp}°C :: $*"
+start=$(date +%s)
+nice -n 19 ionice -c 3 timeout --signal=TERM "$MAX_SEC" "$@" &
+child=$!
+
+bad=0
+peak_temp=$temp
+(
+  while kill -0 "$child" 2>/dev/null; do
+    sleep 5
+    t=$(for f in /sys/class/thermal/thermal_zone*/temp; do [ -r "$f" ] && echo $(( $(cat "$f") / 1000 )); done | sort -n | tail -1)
+    l=$(awk '{print $1}' /proc/loadavg)
+    [ -n "${t:-}" ] && [ "$t" -gt "$peak_temp" ] && peak_temp=$t
+    if [ -n "${t:-}" ] && [ "$t" -ge $((MAX_TEMP + 3)) ]; then
+      bad=$((bad + 1))
+    elif awk -v l="$l" -v m="$MAX_LOAD" 'BEGIN{exit !(l > m + 1.5)}'; then
+      bad=$((bad + 1))
+    else
+      bad=0
+    fi
+    if [ "$bad" -ge 2 ]; then
+      log "KILL hot/busy temp=${t}°C load=${l} after $(( $(date +%s) - start ))s :: $*"
+      kill -TERM "$child" 2>/dev/null
+      sleep 3
+      kill -KILL "$child" 2>/dev/null
+      break
+    fi
+  done
+) &
+watchdog=$!
+
+wait "$child"; rc=$?
+kill "$watchdog" 2>/dev/null
+dur=$(( $(date +%s) - start ))
+log "END rc=${rc} ${dur}s peak_temp=${peak_temp}°C :: $*"
+[ "$dur" -gt 60 ] && echo "[heavy-guard] 跑了 ${dur}s，峰值 ${peak_temp}°C（阈值 ${MAX_TEMP}°C），rc=${rc}" >&2
+exit "$rc"

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -u
+LOG=/home/zts/.local/state/dsh-reframe.log
+ST=/home/zts/.dsh/storages
+SRC=/home/zts/.dsh/_retired/workspace.final.json
+B=/home/zts/.dsh/sessions/--home-zts-agent-share-~5BF9~8BDD--
+PC=/home/zts/.dsh/storages/session_projcache/sessions
+log(){ echo "[$(date '+%F %T')] $*" >>"$LOG"; }
+cnt(){ python3 -c "import json;d=json.load(open('$ST/workspace.json'));print(len(list(d['tables']['workspaces'].values())[0]['sessionIds']))" 2>/dev/null; }
+log "=== 重建帧后收尾开始 ==="
+systemctl stop dsh-web && log "已停服"
+for s in session-2a54085d-185f-4faa-b582-1316006bac47 session-6cf30880-9b8e-422f-927c-b82feb37f45f session-0dcad317-00ee-4e8d-b90e-968eb253b29c; do
+  rm -rf "$B/$s" "$PC/$s.json"; log "清空草稿 $s"
+done
+cp -a "$ST/workspace.json" "$ST/workspace.json.bak-reframe-$(date +%Y%m%d-%H%M%S)"
+cp "$SRC" "$ST/workspace.json" && log "归属表写入 $(cnt) 条"
+chown -R zts:zts "$B"
+systemctl start dsh-web && log "已启动"
+ok=0
+for i in $(seq 1 25); do
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  [ "$code" = "401" ] && { log "健康检查通过 (第 ${i} 次)"; ok=1; break; }
+  sleep 2
+done
+sleep 25
+n=$(cnt); log "启动 25s 后归属数=${n} (期望 59/60)"
+[ "$n" -ge 59 ] && log "=== 成功：归属未被清理 ===" || log "=== 失败：归属被清理到 ${n} ==="

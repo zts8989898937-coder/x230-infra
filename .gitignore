@@ -1,0 +1,11 @@
+# Ignore local caches, logs, runtime backups, and credentials
+*.bak*
+*.log
+*.tmp
+*.swp
+.env
+*secret*
+*htpasswd*
+*password*
+node_modules/
+__pycache__/

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# 刷题工作区双向同步：X230 <-> 香港（较新的文件胜出，不删除）
+set -euo pipefail
+LOCAL=/home/zts/agent-share/刷题/
+REMOTE=/home/ubuntu/刷题/
+SLIM=(-az --exclude '.git' --exclude '.vscode-server')
+N=$(ssh -o ConnectTimeout=10 hk "find $REMOTE -type f | wc -l" 2>/dev/null || echo 0)
+if [ "${N:-0}" -lt 3 ]; then echo "skip: remote file count=$N"; exit 0; fi
+# 本机有改动 → 先推上去（以较新为准）
+rsync "${SLIM[@]}" -u -e "ssh -o ConnectTimeout=10" "$LOCAL" "hk:$REMOTE"
+# 再把香港的较新文件拉回来
+rsync "${SLIM[@]}" -u -e "ssh -o ConnectTimeout=10" "hk:$REMOTE" "$LOCAL"
+echo "bidirectional sync $(date -Is) files=$N"

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# 手机相册 → gdrive:照片/X230-手机相册/（幂等、可续传）
+set -uo pipefail
+LOG=/home/zts/.local/state/photos-sync.log
+mkdir -p "$(dirname "$LOG")"
+exec >>"$LOG" 2>&1
+echo "=== $(date -Is) start"
+FLAGS=(--transfers 8 --checkers 16 --drive-chunk-size 16M --drive-upload-cutoff 16M --tpslimit 10 --retries 5 --stats 300s --stats-one-line -v)
+rclone copy /home/zts/phone-photos/DCIM     "gdrive:照片/X230-手机相册/DCIM"     "${FLAGS[@]}"
+rclone copy /home/zts/phone-photos/Pictures "gdrive:照片/X230-手机相册/Pictures" "${FLAGS[@]}"
+echo "=== $(date -Is) done"

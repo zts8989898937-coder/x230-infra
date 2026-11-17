@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""Re-apply the terminal query-response forwarder after DSH/npm upgrades.
+
+Why this file exists
+--------------------
+`@deepseek-ai/dsh-api-terminal-controller` renders browser terminals with a
+headless @xterm/headless emulator: every PTY chunk goes through
+`this.screen.write(data)` and the browser only receives serialized screen
+snapshots. The emulator *does* answer terminal queries (DA1 `ESC[0c` ->
+`ESC[?1;2c`, DSR, ...), but those answers are emitted on `screen.onData` and
+nothing subscribes, so they are dropped instead of being written back to the
+PTY. fish waits 10 s for the DA1 answer and then prints "cannot read the
+response to the Primary Device Attribute query", disabling optional terminal
+features in every DSH sidebar terminal.
+
+The patch subscribes `screen.onData` in the BrowserTerminal constructor and
+writes each emulator response back to the PTY, which is what a real terminal
+(kitty, xterm, ...) does.
+
+An npm upgrade overwrites `lib/index.js`, so `dsh-web.service` runs this script
+from `ExecStartPre` (`/etc/systemd/system/dsh-web.service.d/54-terminal-query-patch.conf`);
+the script is idempotent.
+
+Usage
+-----
+    dsh-terminal-query-patch            # apply (log to stdout)
+    dsh-terminal-query-patch --check    # exit 1 when a patch is needed
+    dsh-terminal-query-patch --quiet    # for ExecStartPre
+
+Exit codes: 0 patched/already patched, 1 --check found work, 2 anchor missing
+(upstream source changed — inspect the file before trusting the forwarder).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+MARKER = "dsh-terminal-query-patch"
+ANCHOR = "\t\tthis.screen.loadAddon(this.serializer);\n"
+
+INSERT = """\t\t// dsh-terminal-query-patch: the headless emulator answers DA1/DSR/OSC
+\t\t// queries on onData; those replies belong to the PTY, not the screen.
+\t\tthis.screen.onData((data) => {
+\t\t\tvoid Promise.resolve(this.handle.write(data)).catch(() => {});
+\t\t});
+"""
+
+ROOTS = [
+    Path("/usr/lib/node_modules"),
+    Path("/usr/local/lib/node_modules"),
+    Path.home() / ".dsh" / "profiles",
+]
+
+
+def targets() -> list[Path]:
+    """Every installed copy of the terminal controller host bundle."""
+    found: list[Path] = []
+    for root in ROOTS:
+        if not root.is_dir():
+            continue
+        for candidate in root.glob("**/dsh-api-terminal-controller/lib/index.js"):
+            if candidate.is_file() and candidate not in found:
+                found.append(candidate)
+    return found
+
+
+def backup_dir() -> Path:
+    path = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    path = path / "dsh-terminal-query-patch" / "backups"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def atomic_write(path: Path, text: str) -> None:
+    """Replace content in a NEW inode, keeping the npm/pnpm store copy pristine."""
+    fd, temp = tempfile.mkstemp(dir=str(path.parent), prefix=".terminal-query-", suffix=".js")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(temp, path.stat().st_mode & 0o777)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def patch_file(path: Path, check_only: bool, log) -> str:
+    source = path.read_text(encoding="utf-8")
+    if MARKER in source:
+        return "already patched"
+    if ANCHOR not in source:
+        log(f"! anchor missing in {path} (upstream changed) - not patching")
+        return "anchor missing"
+    if check_only:
+        log(f"- {path}: patch needed")
+        return "patch needed"
+
+    patched = source.replace(ANCHOR, ANCHOR + INSERT, 1)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = backup_dir() / f"index.js.{stamp}"
+    shutil.copy2(path, backup)
+    atomic_write(path, patched)
+    log(f"+ patched {path}")
+    log(f"  backup  {backup}")
+    return "patched"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="report whether a patch is needed, change nothing")
+    parser.add_argument("--quiet", action="store_true", help="only report problems (ExecStartPre)")
+    args = parser.parse_args()
+
+    def log(message: str) -> None:
+        if not args.quiet or message.startswith("!"):
+            print(f"[terminal-query-patch] {message}", flush=True)
+
+    found = targets()
+    if not found:
+        log("! terminal controller not installed anywhere - nothing to do")
+        return 0
+
+    states = [patch_file(path, args.check, log) for path in found]
+    if "anchor missing" in states:
+        return 2
+    if args.check and "patch needed" in states:
+        return 1
+    if all(state == "already patched" for state in states):
+        log("already patched - nothing to do")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

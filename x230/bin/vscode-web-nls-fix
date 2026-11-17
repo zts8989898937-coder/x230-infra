@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# 让 code serve-web 的中文界面在升级后依然可用：
+# 1) product.json 的 nlsCoreBaseUrl 指向本站 /code/nls/
+# 2) workbench.js / server-main.js 里残留的 CDN 地址一并替换
+# 依赖：HK nginx 上已放好 /www/server/nginx/nls/<commit>/<ver>/zh-cn/nls.messages.js
+set -euo pipefail
+QUIET=0; [[ "${1:-}" == "--quiet" ]] && QUIET=1
+log(){ [[ $QUIET -eq 1 ]] || echo "[nls-fix] $*"; }
+
+fix_product() { # $1 = product.json path (可 sudo)
+  local p="$1"; [[ -f "$p" ]] || return 0
+  python3 - "$p" <<'PY'
+import json,sys
+p=sys.argv[1]; d=json.load(open(p))
+if d.get('nlsCoreBaseUrl')=='/code/nls/': sys.exit(0)
+d['nlsCoreBaseUrl']='/code/nls/'
+json.dump(d,open(p,'w'),ensure_ascii=False,indent=2)
+print('patched',p)
+PY
+}
+
+fix_js() { # $1 = js file
+  local f="$1"; [[ -f "$f" ]] || return 0
+  if grep -q 'vscode-unpkg\.net/nls/' "$f" 2>/dev/null; then
+    cp -n "$f" "$f.orig-nls" 2>/dev/null || true
+    python3 - "$f" <<'PY'
+import sys
+p=sys.argv[1]
+s=open(p,encoding='utf-8',errors='surrogateescape').read()
+open(p,'w',encoding='utf-8',errors='surrogateescape').write(s.replace('https://www.vscode-unpkg.net/nls/','/code/nls/'))
+print('patched',p)
+PY
+  fi
+}
+
+fix_product /usr/share/code/resources/app/product.json
+for d in /home/zts/.vscode/cli/serve-web/*/; do
+  fix_product "${d}product.json"
+  fix_js "${d}out/server-main.js"
+  fix_js "${d}out/vs/code/browser/workbench/workbench.js"
+done
+log "done"

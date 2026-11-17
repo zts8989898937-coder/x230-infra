@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# arch-safe-upgrade — Arch Linux 防滚炸安全更新闸门
+# 原则：
+#   1. 绝不做部分升级（pacman -Sy <pkg>），装包一律走 -Syu --needed
+#   2. 先检查：锁/空间/数据库/Arch新闻/距上次-Syu天数/临时db实测变更与soname风险
+#   3. 更新前强制导出包清单 + 触发 dsh-snapshot
+#   4. 更新后强制校验：/boot 与 initramfs、pacdiff -o、pacman -Dk、failed units、是否需重启
+#
+# 用法：
+#   arch-safe-upgrade --check          # 完整预检 + 模拟变更分析（不改系统，默认）
+#   arch-safe-upgrade --apply          # 通过闸门后执行 pacman -Syu（并提示 AUR 与重启）
+#   arch-safe-upgrade --install <pkg>  # 安全装包（走 pacman -Syu --needed <pkg>）
+set -uo pipefail
+
+MODE="check"
+INSTALL_PKGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) MODE="check"; shift ;;
+    --apply) MODE="apply"; shift ;;
+    --install)
+      MODE="install"; shift
+      while [ $# -gt 0 ]; do INSTALL_PKGS+=("$1"); shift; done
+      ;;
+    -h|--help)
+      echo "用法: $0 [--check | --apply | --install <pkg...>]"
+      exit 0
+      ;;
+    *) echo "未知参数: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$MODE" = "install" ] && [ "${#INSTALL_PKGS[@]}" -eq 0 ]; then
+  echo "用法: $0 --install <pkg...>" >&2
+  exit 2
+fi
+
+export HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:7897}"
+export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:7897}"
+
+last_syu_ts=$(grep -E 'Running .*-Syu' /var/log/pacman.log 2>/dev/null | tail -n1 | sed -n 's/^\[\([^]]*\)\].*/\1/p' || true)
+days_since="unknown"
+if [ -n "$last_syu_ts" ]; then
+  last_epoch=$(date -d "$last_syu_ts" +%s 2>/dev/null || echo 0)
+  now_epoch=$(date +%s)
+  [ "$last_epoch" -gt 0 ] && days_since=$(( (now_epoch - last_epoch) / 86400 ))
+fi
+
+echo "=== Arch Linux 防炸更新检查 ($(date '+%F %T')) ==="
+echo "上次完整 -Syu: ${last_syu_ts:-未记录} (距今 ${days_since} 天)"
+
+# 1. 基础阻塞检查
+[ -e /var/lib/pacman/db.lck ] && { echo "ERROR: 存在 /var/lib/pacman/db.lck"; exit 1; }
+root_avail_gb=$(df -BG / | awk 'NR==2{gsub(/G/,"",$4); print $4}')
+boot_avail_mb=$(df -Pm /boot | awk 'NR==2{print $4}')
+echo "磁盘空间: / 可用 ${root_avail_gb}G, /boot 可用 ${boot_avail_mb}MB"
+[ "${root_avail_gb:-0}" -lt 5 ] && { echo "ERROR: 根分区可用不足 5G"; exit 1; }
+[ "${boot_avail_mb:-0}" -lt 150 ] && { echo "ERROR: /boot 可用不足 150MB"; exit 1; }
+
+if ! pacman -Dk >/dev/null 2>&1; then
+  echo "ERROR: pacman -Dk 数据库异常，请先排查"
+  pacman -Dk || true
+  exit 1
+fi
+
+# 2. 检查 Arch 官方新闻 RSS（找出上次 -Syu 之后发布的新闻）
+echo "--- Arch 官方新闻检查 ---"
+python3 - "${last_syu_ts:-1970-01-01}" <<'PY' || true
+import sys, urllib.request, xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
+
+since_str = sys.argv[1][:10]
+try:
+    req = urllib.request.Request("https://archlinux.org/feeds/news/", headers={"User-Agent": "arch-safe-upgrade/1.0"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = r.read()
+    root = ET.fromstring(data)
+    items = root.findall("./channel/item")[:8]
+    recent = []
+    for it in items:
+        title = (it.findtext("title") or "").strip()
+        pub = (it.findtext("pubDate") or "").strip()
+        dt = parsedate_to_datetime(pub).strftime("%Y-%m-%d") if pub else ""
+        if dt >= since_str:
+            recent.append((dt, title))
+    if recent:
+        print(f"⚠️ 上次 -Syu ({since_str}) 以来有 {len(recent)} 条 Arch 官方新闻（先确认是否需人工干预）：")
+        for dt, t in recent:
+            print(f"  - [{dt}] {t}")
+    else:
+        latest = items[0].findtext("pubDate", "") if items else ""
+        print(f"OK: 上次 -Syu ({since_str}) 后无新增官方新闻（最新一条: {latest}）")
+except Exception as e:
+    print(f"WARN: 获取 Arch 新闻失败 ({e})")
+PY
+
+# 3. 隔离临时库模拟解析待更新列表（不污染 /var/lib/pacman/sync）
+SIM_DB=$(mktemp -d /tmp/arch-safe-sim.XXXXXX)
+trap 'sudo rm -rf "$SIM_DB" 2>/dev/null || rm -rf "$SIM_DB"' EXIT
+chmod 0755 "$SIM_DB"
+mkdir -p "$SIM_DB/sync"
+chmod 1777 "$SIM_DB/sync"
+cp -a /var/lib/pacman/local "$SIM_DB/"
+sudo pacman --dbpath "$SIM_DB" -Sy >/dev/null
+
+UPG_LIST=$(pacman --dbpath "$SIM_DB" -Qu 2>/dev/null || true)
+UPG_COUNT=$(echo "$UPG_LIST" | grep -c . || true)
+FULL_SIM=$(pacman --dbpath "$SIM_DB" -Su --print --print-format '%n %v' 2>/dev/null || true)
+FULL_COUNT=$(echo "$FULL_SIM" | grep -c . || true)
+
+echo "--- 待更新分析: 直接升级 ${UPG_COUNT} 个，含新增依赖共 ${FULL_COUNT} 个 ---"
+if [ "$UPG_COUNT" -gt 0 ]; then
+  echo "$UPG_LIST" | grep -E '^(linux|linux-firmware|intel-ucode|systemd|glibc|openssl|pacman|mkinitcpio|ca-certificates|docker|nodejs|chromium|archlinux-keyring)\b' | sed 's/^/  [核心] /' || true
+  while read -r n v; do
+    [ -z "$n" ] && continue
+    pacman -Q "$n" >/dev/null 2>&1 || echo "  [新增依赖] $n $v"
+  done <<< "$FULL_SIM"
+fi
+
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  AUR_LIST=$(runuser -u zts -- env HOME=/home/zts HTTPS_PROXY="$HTTPS_PROXY" HTTP_PROXY="$HTTP_PROXY" paru -Qua 2>/dev/null || true)
+else
+  AUR_LIST=$(paru -Qua 2>/dev/null || true)
+fi
+AUR_COUNT=$(echo "$AUR_LIST" | grep -c . || true)
+echo "--- AUR 待更新 (${AUR_COUNT} 个) ---"
+[ "$AUR_COUNT" -gt 0 ] && echo "$AUR_LIST" | sed 's/^/  [AUR] /'
+
+if [ -x /usr/bin/paru ]; then
+  echo "--- paru 动态库检查 ---"
+  ldd /usr/bin/paru 2>/dev/null | grep -E 'ssl|crypto|alpm' | sed 's/^/  /' || true
+fi
+
+if [ "$MODE" = "check" ]; then
+  echo "=== --check 预检完成（未对系统做任何改动） ==="
+  exit 0
+fi
+
+# 4. 实战更新前提醒活跃会话 & 自动备份状态
+sess_hits=$(ps -eo pid,comm --no-headers | grep -E '\b(agy|claude|codex)\b' | head -n 5 || true)
+if [ -n "$sess_hits" ]; then
+  echo "⚠️ 注意：检测到活跃 AI 会话，若本轮包含 nodejs/docker/systemd/chromium，请注意评估影响。"
+fi
+
+echo "--- 战前留证：导出包清单与 DSH 快照 ---"
+sudo /usr/local/bin/x230-backup-state /home/zts/backups/system-state >/dev/null
+sudo systemctl start dsh-snapshot.service || true
+
+# 5. 执行安全更新（绝对不中断或只更新半截）
+if echo "$UPG_LIST" | grep -q '^archlinux-keyring ' && [ "${days_since:-0}" != "unknown" ] && [ "${days_since:-0}" -ge 21 ]; then
+  echo ">>> 先同步 archlinux-keyring 并紧接全量 -Su..."
+  sudo pacman -Sy --needed --noconfirm archlinux-keyring
+  if [ "$MODE" = "install" ]; then
+    sudo pacman -Su --needed "${INSTALL_PKGS[@]}"
+  else
+    sudo pacman -Su
+  fi
+else
+  if [ "$MODE" = "install" ]; then
+    sudo pacman -Syu --needed "${INSTALL_PKGS[@]}"
+  else
+    sudo pacman -Syu
+  fi
+fi
+
+# 6. 滚后校验闸门
+echo "=== 滚后校验 ==="
+for f in /boot/vmlinuz-linux /boot/initramfs-linux.img /boot/intel-ucode.img /boot/loader/entries/arch.conf; do
+  [ -s "$f" ] || { echo "❌ 严重警告: 启动文件异常 $f"; exit 1; }
+done
+init_size=$(stat -c %s /boot/initramfs-linux.img)
+echo "✓ /boot 启动件完整 (initramfs=${init_size}B)"
+
+pacnew_out=$(sudo pacdiff -o 2>/dev/null || true)
+if [ -n "$pacnew_out" ]; then
+  echo "⚠️ 发现待合并配置文件 (.pacnew/.pacsave)，请用 sudo pacdiff 处理："
+  echo "$pacnew_out" | sed 's/^/  /'
+else
+  echo "✓ 无待合并 .pacnew/.pacsave"
+fi
+
+sudo pacman -Dk
+failed=$(systemctl --failed --no-legend | wc -l)
+echo "异常服务数: $failed"
+[ "$failed" -gt 0 ] && systemctl --failed --no-pager
+
+run_k=$(uname -r)
+pkg_k=$(pacman -Q linux | awk '{print $2}')
+if echo "$UPG_LIST" | grep -qE '^(linux|systemd|glibc|intel-ucode)\b'; then
+  sudo touch /run/reboot-required
+  echo "⚠️ 本次更新了内核/systemd/微码（当前运行 $run_k，已装 $pkg_k）。"
+  echo "   请在方便时运行: x230-safe-reboot --check  确认无阻塞后再执行 --now。"
+fi

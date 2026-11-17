@@ -1,0 +1,9 @@
+[Unit]
+Description=Proxy egress guard (Google/ChatGPT probe, auto failover)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=zts
+Environment=HOME=/home/zts
+ExecStart=/home/zts/.local/bin/proxy-guard

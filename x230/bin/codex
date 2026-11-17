@@ -1,0 +1,8 @@
+#!/bin/sh
+# codex 包装：加载 DEEPSEEK_API_KEY 并 export，然后调用真 codex
+if [ -f /home/zts/.config/deepseek.env ]; then
+  set -a
+  . /home/zts/.config/deepseek.env
+  set +a
+fi
+exec /usr/bin/codex "$@"

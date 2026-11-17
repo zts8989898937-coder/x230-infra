@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# dsh-restart-safe — 重启 dsh-web，但把自救动作交给 systemd，脱离当前会话
+# 当前会话会被杀掉，属预期；恢复信息稍后由 dsh-rescue 推到手机 ntfy。
+set -u
+UNIT="dsh-rescue-$(date +%s)"
+sudo systemd-run --collect --unit="$UNIT" --description="DSH self-rescue" \
+     /usr/local/bin/dsh-rescue
+echo "已派发 $UNIT"
+echo "当前会话会断，手机 ntfy 会收到「正在重启 / 已恢复」两条消息。"

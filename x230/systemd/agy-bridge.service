@@ -1,0 +1,16 @@
+[Unit]
+Description=agy-bridge — Antigravity CLI 转 OpenAI 兼容接口（127.0.0.1:8899）
+After=network-online.target
+
+[Service]
+Type=simple
+User=zts
+Environment=HOME=/home/zts
+Environment=PATH=/home/zts/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/zts/.local/bin/agy-bridge --port 8899
+Restart=always
+RestartSec=3
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

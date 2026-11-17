@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""产出归位 put-output — 放进 工作产出/<分类>/，同步到 Google Drive 的 工作产出/，并写 INDEX.md。
+
+默认「复制」（不动原件，历史会话里的旧路径不会失效）；加 --move 才是移动。
+默认同步云端（gdrive:工作产出）；--no-drive 只落本地。
+拿不准的扩展名进 06-临时中转/<日期>/，每周复盘再归类。
+
+用法:
+  put-output 报告.md                 # 复制到 01-文档报告/，写 INDEX，传 Drive
+  put-output 海报.png --move         # 移动
+  put-output some_dir/ --name 星际拓荒 # 目录用自定义名
+  put-output 文件 --dry-run          # 只打印会去哪
+  put-output 文件 --no-drive         # 只放本地
+  put-output 作业.docx --homework 程序设计基础   # 课程作业归位到 作业/01-程序设计基础/
+"""
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+
+ROOT = os.path.expanduser("~/agent-share/工作产出")
+INDEX = os.path.join(ROOT, "INDEX.md")
+DRIVE_REMOTE = "gdrive:工作产出"
+
+CATS = {
+    "01-文档报告": {".md", ".pdf", ".docx", ".doc", ".txt", ".epub", ".rst"},
+    "02-设计稿": {".png", ".jpg", ".jpeg", ".webp", ".svg", ".html", ".pptx", ".key",
+                  ".fig", ".sketch", ".gif"},
+    "03-数据表格": {".xlsx", ".xls", ".csv", ".tsv", ".json", ".parquet", ".db"},
+    "04-代码脚本": {".py", ".sh", ".js", ".ts", ".yml", ".yaml", ".toml", ".c",
+                    ".cpp", ".java", ".go", ".rs", ".sql"},
+    "05-备份归档": {".zip", ".tar", ".gz", ".tgz", ".7z", ".rar", ".bak"},
+}
+
+
+COURSES = {
+    "程序设计基础": "作业/01-程序设计基础",
+    "程序": "作业/01-程序设计基础",
+    "史纲": "作业/02-中国近现代史纲要",
+    "中国近现代史纲要": "作业/02-中国近现代史纲要",
+    "近代史": "作业/02-中国近现代史纲要",
+    "民族宗教": "作业/03-民族宗教答题",
+    "入学登记表": "作业/04-入学登记表",
+}
+
+
+def guess_category(path: str) -> str:
+    name = os.path.basename(path.rstrip("/"))
+    ext = os.path.splitext(name)[1].lower()
+    for cat, exts in CATS.items():
+        if ext in exts:
+            return cat
+    return "06-临时中转"
+
+
+def _rclone(args, timeout=180):
+    try:
+        return subprocess.run(["rclone", *args], capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError:
+        print("   [Drive] 找不到 rclone，跳过云端同步")
+        return None
+    except subprocess.TimeoutExpired:
+        print("   [Drive] 同步超时，可稍后手动 rclone copy 补传")
+        return None
+
+
+def _looks_sensitive(name: str) -> bool:
+    """按文件名粗筛敏感件（cookie/token/secret/凭据包），命中就不上云。"""
+    low = name.lower()
+    keys = ("cookie", "secret", "token", ".pem", ".key", ".env",
+            "mcp-servers-", "memories-", "cordis.patch.yml", "cordis.yml")
+    return any(k in low for k in keys)
+
+
+def drive_sync(rel: str) -> None:
+    """把刚归位的条目推到 gdrive:工作产出/<同样路径>（失败只提示，不影响本地）。"""
+    src = os.path.join(ROOT, rel)
+    dst = f"{DRIVE_REMOTE}/{rel.replace(os.sep, '/')}"
+    if _looks_sensitive(os.path.basename(rel)):
+        print("   [Drive] 跳过云端同步：文件名命中敏感规则（cookie/token/secret/凭据包）")
+        return
+    # 文件必须用 copyto，否则 rclone copy 会在远端造一个同名目录
+    verb = "copy" if os.path.isdir(src) else "copyto"
+    args = [verb, src, dst, "--transfers", "4", "--stats", "0"]
+    # rclone 不允许 copyto + 过滤器（"can't limit to single files when using filters"），
+    # 单文件的安全拦截已经由 _looks_sensitive() 前置完成；只有目录复制才带排除表。
+    if verb == "copy":
+        args += ["--exclude-from", os.path.expanduser("~/.config/rclone/sensitive-exclude.txt")]
+    r = _rclone(args)
+    if r is None:
+        return
+    err = "\n".join(l for l in (r.stderr or "").splitlines()
+                    if "shared Google Drive client_id" not in l and l.strip())
+    if r.returncode != 0:
+        print(f"   [Drive] 同步失败: {err.strip()[:300]}")
+        return
+    print(f"   [Drive] 已同步 -> {dst}")
+    ri = _rclone(["copyto", INDEX, f"{DRIVE_REMOTE}/INDEX.md"], timeout=60) if os.path.exists(INDEX) else None
+    if ri is not None and ri.returncode == 0:
+        print(f"   [Drive] INDEX.md 已更新")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("path")
+    ap.add_argument("--name", default=None, help="落盘后的名字（默认沿用原名）")
+    ap.add_argument("--move", action="store_true", help="移动而不是复制")
+    ap.add_argument("--category", default=None, help="强制指定分类目录（可带子目录，如 作业/01-程序设计基础）")
+    ap.add_argument("--homework", default=None, help="课程作业：按课程名归位到 作业/<课程目录>/")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-drive", action="store_true", help="只落本地，不同步 Google Drive")
+    args = ap.parse_args()
+
+    src = os.path.abspath(os.path.expanduser(args.path))
+    if not os.path.exists(src):
+        print(f"不存在: {src}", file=sys.stderr)
+        return 2
+
+    if args.homework:
+        cat = COURSES.get(args.homework, "作业/05-其他")
+    else:
+        cat = args.category or guess_category(src)
+    name = args.name or os.path.basename(src.rstrip("/"))
+    day = datetime.now().strftime("%Y%m%d")
+    if cat == "06-临时中转":
+        dest_dir = os.path.join(ROOT, cat, day)
+    else:
+        dest_dir = os.path.join(ROOT, cat)
+    dest = os.path.join(dest_dir, name)
+
+    if os.path.abspath(dest) == src:
+        print(f"已在该位置，无需处理: {dest}")
+        return 0
+
+    print(f"{'[dry-run] ' if args.dry_run else ''}{src}")
+    print(f"   -> {dest}   ({'移动' if args.move else '复制'})")
+    if not args.no_drive:
+        if _looks_sensitive(os.path.basename(dest)):
+            print("   -> （敏感文件：只落本地，不会上云）")
+        else:
+            print(f"   -> {DRIVE_REMOTE}/{os.path.relpath(dest, ROOT)}   (Google Drive)")
+    if args.dry_run:
+        return 0
+
+    os.makedirs(dest_dir, exist_ok=True)
+    if os.path.exists(dest):
+        stem, ext = os.path.splitext(name)
+        dest = os.path.join(dest_dir, f"{stem}-{datetime.now():%H%M%S}{ext}")
+        print(f"   重名，改存为 {dest}")
+    if os.path.isdir(src):
+        (shutil.move if args.move else shutil.copytree)(src, dest)
+    else:
+        (shutil.move if args.move else shutil.copy2)(src, dest)
+
+    rel = os.path.relpath(dest, ROOT)
+    line = f"| {day} | {cat} | `{rel}` | 由 put-output 归位 |\n"
+    if os.path.exists(INDEX):
+        with open(INDEX, "a") as fh:
+            fh.write(line)
+        print(f"   已写入 {INDEX}")
+    if not args.no_drive:
+        drive_sync(rel)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

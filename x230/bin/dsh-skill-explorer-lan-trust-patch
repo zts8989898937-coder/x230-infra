@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Re-apply the skill-explorer LAN trust delegation after plugin upgrades.
+
+Why this file exists
+--------------------
+`@linxin666/dsh-client-ui-skill-explorer` fences every `/api/dsh-skill-explorer/*`
+route to loopback (socket address AND Host header AND no forwarding header).
+This host serves the GUI on http://192.168.8.120:3082 through a systemd socket
+proxy in front of the tailnet listener 100.110.77.111:3080, so a LAN browser is
+never on loopback and the whole skill center answers
+`403 {"error":"forbidden: loopback-only"}` even though `--trusted-host
+192.168.8.120:3082` lets every other route work.
+
+The patch adds one extra allow path that is strictly narrower than the rest of
+the GUI already is: it asks the host's own `connection` service
+(`requestRejection`), which is the same gate every other authenticated route
+uses — Host/Origin must be in the host's trusted authorities (trustedHosts /
+loopback / bind address) and the request must carry the dsh web browser-session
+cookie. A missing service, a throwing lookup or any rejection keeps the answer
+`false`, so the loopback fence wins by default.
+
+An npm reinstall overwrites `lib/index.js`, which is why the skill center broke
+again on 2026-11-07 after a plugin upgrade. `dsh-web.service` therefore runs
+this script from `ExecStartPre`
+(`/etc/systemd/system/dsh-web.service.d/50-skill-explorer-lan-trust.conf`), so
+every restart/boot re-applies the patch; the script is idempotent.
+
+Usage
+-----
+    dsh-skill-explorer-lan-trust-patch            # apply (log to stdout)
+    dsh-skill-explorer-lan-trust-patch --check    # exit 1 when a patch is needed
+    dsh-skill-explorer-lan-trust-patch --quiet    # for ExecStartPre
+
+Exit codes: 0 patched/already patched, 1 --check found work, 2 anchor missing
+(upstream source changed — inspect the file before trusting the fence).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+MARKER = "isHostTrustedBrowserRequest"
+ANCHOR = "function isSkillExplorerAllowed(ctx, request) {"
+REPLACEMENT = "return isPairedOrLoopbackAllowed(ctx, request) || isHostTrustedBrowserRequest(ctx, request);"
+
+HELPER = """//#region src/host-trust.ts
+/**
+* Whether the host's own request trust admits this request: the `connection`
+* service applies the same gate every other authenticated route uses - the
+* Host/Origin authority must be one the host trusts (trustedHosts, loopback or
+* the bind address) and the request must carry the dsh web browser-session
+* cookie. The socket address is deliberately not consulted, which is what a
+* socket-proxied LAN entry needs: this host serves the GUI on
+* http://192.168.8.120:3082 in front of the tailnet listener, so an admitted
+* browser is never on loopback even though --trusted-host accepts it.
+* Fail-closed: a missing service, a throwing lookup or any rejection answers
+* false, leaving the loopback fence in charge.
+* @param ctx - host context; may expose the `connection` service.
+* @param request - the incoming HTTP request.
+* @returns true only when the host trusts both the authority and the session.
+*/
+function isHostTrustedBrowserRequest(ctx, request) {
+	try {
+		const connection = typeof ctx.get === "function" ? ctx.get("connection", false) : void 0;
+		if (connection === void 0 || connection === null) return false;
+		if (typeof connection.requestRejection !== "function") return false;
+		return connection.requestRejection(request) === void 0;
+	} catch {
+		return false;
+	}
+}
+//#endregion
+"""
+
+REGION = "//#region src/access.ts"
+ORIGINAL_BODY = "return isPairedOrLoopbackAllowed(ctx, request);"
+
+
+def targets() -> list[Path]:
+    """Every installed copy of the plugin's host bundle in this DSH home."""
+    home = Path(os.environ.get("DSH_HOME") or Path.home() / ".dsh")
+    found = []
+    for profile in sorted((home / "profiles").glob("*/node_modules")):
+        candidate = profile / "@linxin666/dsh-client-ui-skill-explorer" / "lib" / "index.js"
+        if candidate.is_file():
+            found.append(candidate)
+    return found
+
+
+def backup_dir() -> Path:
+    path = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    path = path / "dsh-skill-explorer-patch" / "backups"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def atomic_write(path: Path, text: str) -> None:
+    """Replace file content in a NEW inode, so the pnpm store copy stays pristine."""
+    fd, temp = tempfile.mkstemp(dir=str(path.parent), prefix=".lan-trust-", suffix=".js")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(temp, path.stat().st_mode & 0o777)
+        os.replace(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def patch_file(path: Path, check_only: bool, log) -> str:
+    source = path.read_text(encoding="utf-8")
+    if MARKER in source:
+        return "already patched"
+    if ANCHOR not in source or REGION not in source or ORIGINAL_BODY not in source:
+        log(f"! anchor missing in {path} (upstream changed the fence) - not patching")
+        return "anchor missing"
+    if check_only:
+        log(f"- {path}: patch needed")
+        return "patch needed"
+
+    head, tail = source.split(REGION, 1)
+    head = head + HELPER + REGION
+    patched = head + tail.replace(ORIGINAL_BODY, REPLACEMENT, 1)
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = backup_dir() / f"{path.parent.parent.name}-index.js.{stamp}"
+    shutil.copy2(path, backup)
+    atomic_write(path, patched)
+    log(f"+ patched {path}")
+    log(f"  backup  {backup}")
+    return "patched"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="report whether a patch is needed, change nothing")
+    parser.add_argument("--quiet", action="store_true", help="only report problems (ExecStartPre)")
+    args = parser.parse_args()
+
+    def log(message: str) -> None:
+        if not args.quiet or message.startswith("!"):
+            print(f"[skill-explorer-lan-trust] {message}", flush=True)
+
+    found = targets()
+    if not found:
+        log("! plugin not installed in any profile - nothing to do")
+        return 0
+
+    states = [patch_file(path, args.check, log) for path in found]
+    if "anchor missing" in states:
+        return 2
+    if args.check and "patch needed" in states:
+        return 1
+    if all(state == "already patched" for state in states):
+        log("already patched - nothing to do")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

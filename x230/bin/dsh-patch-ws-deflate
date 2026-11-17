@@ -1,0 +1,7 @@
+#!/bin/bash
+# 重新应用 WebSocket permessage-deflate 补丁（dsh 升级后会被覆盖）
+F=/usr/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-gateway/lib/index.js
+if grep -q "perMessageDeflate" "$F"; then echo "already patched"; exit 0; fi
+cp -a "$F" "$F.bak-permessage-deflate-$(date +%s)"
+sed -i 's/server = new WebSocketServer({ noServer: true });/server = new WebSocketServer({ noServer: true, perMessageDeflate: { threshold: 256, zlibDeflateOptions: { level: 3 } } });/' "$F"
+node --check "$F" && echo "patched OK"

@@ -1,0 +1,8 @@
+[Unit]
+Description=LAN proxy for dsh-web (192.168.8.120:3081 -> Tailscale 3080)
+Requires=dsh-web-lan.socket
+After=dsh-web-lan.socket dsh-web.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 100.110.77.111:3080
+Restart=on-failure

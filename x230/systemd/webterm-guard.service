@@ -1,0 +1,9 @@
+[Unit]
+Description=Health watchdog for public web terminal entry
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=zts
+ExecStart=/home/zts/.local/bin/webterm-guard
+TimeoutStartSec=120

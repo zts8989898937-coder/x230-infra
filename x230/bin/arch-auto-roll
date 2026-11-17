@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""arch-auto-roll — DeepSeek 驱动的 Arch Linux 全自动防炸滚包流水线
+
+流程：
+  1. 避让同期凌晨任务（dsh-nightly-roll / x230-backup），检查磁盘/锁/pacman-Dk。
+  2. 战前留证：导出系统包清单 + 触发 dsh-snapshot。
+  3. 临时隔离库解析真实 -Su 与 AUR 列表 + 抓取 Arch 官方新闻 RSS。
+  4. 调用 DeepSeek (deepseek-chat) 做滚前风险预判（默认积极放行，除非明确冲突/人工新闻）。
+  5. 执行 pacman -Syu --noconfirm（keyring 自动处理与重试）+ 可选 paru -Sua。
+  6. 滚后校验与自愈：/boot 与 initramfs（异常自动 mkinitcpio -P）、pacman -Dk、pacdiff -o、
+     网络门禁自愈（boot-network-guard）、按需安全重启受影响部分（docker/dsh）。
+  7. 调用 DeepSeek 做滚后终审，写报告入 工作产出/01-文档报告/Arch滚包审查/ 并推送飞书；
+     若升级了内核且无活跃 pts 交互 AI 会话、且 AUTO_REBOOT_WHEN_IDLE=1，则延迟 15 秒执行安全重启。
+
+用法：
+  arch-auto-roll              # 完整执行（供 systemd timer / 手动无人值守滚包）
+  arch-auto-roll --dry-run    # 预检 + 模拟解析 + DeepSeek Stage1 实测（不改系统）
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+
+HOME = "/home/zts"
+CONF_PATH = "/etc/arch-auto-roll.conf"
+LOG_PATH = "/var/log/arch-auto-roll.log"
+REPORT_DIR = f"{HOME}/agent-share/工作产出/01-文档报告/Arch滚包审查"
+PROXY = "http://127.0.0.1:7897"
+
+DEFAULTS = {
+    "AUTO_ROLL_ENABLED": "1",
+    "AI_MODELS": "deepseek:deepseek-chat,zai:glm-5.3",
+    "AUTO_REBOOT_WHEN_IDLE": "1",
+    "UPDATE_AUR": "1",
+    "FEISHU_NOTIFY": "1",
+}
+
+
+def log(msg: str) -> None:
+    line = f"[{datetime.now():%F %T}] {msg}"
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+    print(line, flush=True)
+
+
+def read_conf() -> dict[str, str]:
+    conf = dict(DEFAULTS)
+    try:
+        with open(CONF_PATH, encoding="utf-8") as f:
+            for raw in f:
+                s = raw.strip()
+                if not s or s.startswith("#") or "=" not in s:
+                    continue
+                k, v = s.split("=", 1)
+                conf[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return conf
+
+
+def run(cmd: str, timeout: int = 120, as_user: bool = False, extra_env: dict[str, str] | None = None) -> tuple[int, str]:
+    env = os.environ.copy()
+    env.setdefault("HTTPS_PROXY", PROXY)
+    env.setdefault("HTTP_PROXY", PROXY)
+    if extra_env:
+        env.update(extra_env)
+    if as_user and os.geteuid() == 0:
+        argv = ["runuser", "-u", "zts", "--", "env", f"HOME={HOME}", f"HTTPS_PROXY={PROXY}", f"HTTP_PROXY={PROXY}", "bash", "-lc", cmd]
+    else:
+        argv = ["bash", "-lc", cmd]
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, f"timeout({timeout}s)"
+    except Exception as e:
+        return 1, str(e)
+
+
+def read_file(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def secret_deepseek() -> str:
+    for line in read_file(f"{HOME}/.config/deepseek.env").splitlines():
+        if line.startswith("DEEPSEEK_API_KEY="):
+            return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+def call_ai(spec_chain: str, system_prompt: str, user_prompt: str, max_tokens: int = 1800) -> tuple[dict | None, str]:
+    providers = {
+        "deepseek": {
+            "url": "https://api.deepseek.com/chat/completions",
+            "key": secret_deepseek(),
+        },
+        "zai": {
+            "url": "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
+            "key": read_file(f"{HOME}/.config/secrets/zai-coding-plan.key").strip(),
+        },
+    }
+    errors = []
+    for spec in [s.strip() for s in spec_chain.split(",") if ":" in s]:
+        prov, model = spec.split(":", 1)
+        p = providers.get(prov)
+        if not p or not p["key"]:
+            errors.append(f"{spec}:no-key")
+            continue
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        try:
+            proxy_handler = urllib.request.ProxyHandler({"https": PROXY, "http": PROXY})
+            opener = urllib.request.build_opener(proxy_handler)
+            req = urllib.request.Request(
+                p["url"],
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {p['key']}"},
+                method="POST",
+            )
+            with opener.open(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode())
+            text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+            s = text.strip()
+            s = re.sub(r"^```(?:json)?\s*", "", s)
+            s = re.sub(r"\s*```$", "", s)
+            i, j = s.find("{"), s.rfind("}")
+            if i >= 0 and j > i:
+                return json.loads(s[i : j + 1]), spec
+            errors.append(f"{spec}:non-json")
+        except Exception as e:
+            errors.append(f"{spec}:{str(e)[:120]}")
+    return None, "; ".join(errors)
+
+
+def feishu_send(text: str) -> str:
+    try:
+        state = json.loads(read_file(f"{HOME}/.dsh/feishu-im/state.json") or "{}")
+    except json.JSONDecodeError:
+        return "state.json解析失败"
+    app_id, secret = state.get("appId"), state.get("appSecret")
+    receive = state.get("ownerOpenId") or state.get("homeChatId")
+    if not (app_id and secret and receive):
+        return "飞书未配置"
+    domain = (state.get("domain") or "feishu").lower()
+    base = "https://open.larksuite.com" if domain in ("lark", "larksuite") else "https://open.feishu.cn"
+
+    def post(url: str, body: dict, token: str | None = None) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+
+    try:
+        tok = post(base + "/open-apis/auth/v3/tenant_access_token/internal", {"app_id": app_id, "app_secret": secret})
+        if tok.get("code") != 0:
+            return f"token失败:{tok.get('msg')}"
+        msg = post(
+            base + "/open-apis/im/v1/messages?receive_id_type=open_id",
+            {"receive_id": receive, "msg_type": "text", "content": json.dumps({"text": text}, ensure_ascii=False)},
+            tok.get("tenant_access_token"),
+        )
+        return "ok" if msg.get("code") == 0 else f"发送失败:{msg.get('msg')}"
+    except Exception as e:
+        return f"异常:{str(e)[:160]}"
+
+
+def wait_midnight_peers() -> None:
+    for svc in ("dsh-nightly-roll.service", "x230-backup.service"):
+        for _ in range(90):
+            rc, out = run(f"systemctl is-active {svc}", timeout=5)
+            if out.strip() != "active":
+                break
+            log(f"等待 {svc} 完成...")
+            time.sleep(5)
+
+
+def last_syu_info() -> tuple[str, int]:
+    _, out = run(r"grep -E 'Running .*-Syu' /var/log/pacman.log 2>/dev/null | tail -n1", timeout=5)
+    m = re.match(r"^\[([^\]]+)\]", out.strip())
+    if not m:
+        return "未记录", -1
+    ts = m.group(1)
+    rc, ep = run(f"date -d '{ts}' +%s", timeout=5)
+    days = int((time.time() - int(ep.strip())) // 86400) if rc == 0 and ep.strip().isdigit() else -1
+    return ts, days
+
+
+def fetch_arch_news(since_iso: str) -> list[tuple[str, str]]:
+    since_date = since_iso[:10] if len(since_iso) >= 10 else "1970-01-01"
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({"https": PROXY, "http": PROXY}))
+        req = urllib.request.Request("https://archlinux.org/feeds/news/", headers={"User-Agent": "arch-auto-roll/1.0"})
+        with opener.open(req, timeout=15) as r:
+            root = ET.fromstring(r.read())
+        res = []
+        for it in root.findall("./channel/item")[:8]:
+            title = (it.findtext("title") or "").strip()
+            pub = (it.findtext("pubDate") or "").strip()
+            dt = parsedate_to_datetime(pub).strftime("%Y-%m-%d") if pub else ""
+            if dt >= since_date:
+                res.append((dt, title))
+        return res
+    except Exception as e:
+        return [("ERR", f"RSS获取失败: {e}")]
+
+
+def simulate_updates() -> tuple[int, str, list[str], str]:
+    sim_db = tempfile.mkdtemp(prefix="arch-roll-sim.")
+    os.chmod(sim_db, 0o755)
+    os.makedirs(f"{sim_db}/sync", exist_ok=True)
+    os.chmod(f"{sim_db}/sync", 0o1777)
+    try:
+        shutil.copytree("/var/lib/pacman/local", f"{sim_db}/local")
+        rc, sy_out = run(f"pacman --dbpath {sim_db} -Sy", timeout=120)
+        if rc != 0:
+            return rc, "", [], f"pacman -Sy 失败: {sy_out[-400:]}"
+        _, qu_out = run(f"pacman --dbpath {sim_db} -Qu", timeout=30)
+        _, su_out = run(f"pacman --dbpath {sim_db} -Su --print --print-format '%n %v'", timeout=30)
+        new_deps = []
+        for line in su_out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2:
+                rc_q, _ = run(f"pacman -Q {parts[0]}", timeout=5)
+                if rc_q != 0:
+                    new_deps.append(line.strip())
+        return 0, qu_out.strip(), new_deps, ""
+    finally:
+        run(f"rm -rf {sim_db}", timeout=20)
+
+
+def check_interactive_pts() -> str:
+    _, out = run(r"ps -eo pid,tty,etime,comm --no-headers | awk '$2 ~ /^pts\// && $4 ~ /^(agy|claude|codex)$/'", timeout=5)
+    return out.strip()
+
+
+def write_report(day: str, content: str) -> str:
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    path = f"{REPORT_DIR}/{day}.md"
+    latest = f"{REPORT_DIR}/最新.md"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    shutil.copyfile(path, latest)
+    if os.geteuid() == 0:
+        for p in (path, latest):
+            try:
+                os.chown(p, 1000, 1000)
+            except OSError:
+                pass
+    run(f"put-output '{path}'", timeout=60, as_user=True)
+    return path
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    conf = read_conf()
+    if conf.get("AUTO_ROLL_ENABLED", "1") != "1" and not args.dry_run:
+        log("AUTO_ROLL_ENABLED != 1，退出")
+        return 0
+
+    day = datetime.now().strftime("%Y-%m-%d")
+    t0 = time.time()
+    log(f"=== arch-auto-roll start (dry_run={args.dry_run}) ===")
+
+    if not args.dry_run:
+        wait_midnight_peers()
+
+    # 1. 硬性前置检查
+    if os.path.exists("/var/lib/pacman/db.lck"):
+        msg = "❌ Arch 自动滚包中止：存在 /var/lib/pacman/db.lck"
+        log(msg)
+        if conf.get("FEISHU_NOTIFY") == "1" and not args.dry_run:
+            feishu_send(msg)
+        return 1
+
+    _, df_root = run("df -BG / | awk 'NR==2{gsub(/G/,\"\",$4); print $4}'", timeout=5)
+    _, df_boot = run("df -Pm /boot | awk 'NR==2{print $4}'", timeout=5)
+    root_gb = int(df_root.strip() or 0)
+    boot_mb = int(df_boot.strip() or 0)
+    if root_gb < 5 or boot_mb < 150:
+        msg = f"❌ Arch 自动滚包中止：磁盘不足 (/ 剩 {root_gb}G, /boot 剩 {boot_mb}MB)"
+        log(msg)
+        if conf.get("FEISHU_NOTIFY") == "1" and not args.dry_run:
+            feishu_send(msg)
+        return 1
+
+    rc_dk, dk_out = run("pacman -Dk", timeout=30)
+    if rc_dk != 0:
+        msg = f"❌ Arch 自动滚包中止：pacman -Dk 异常: {dk_out[:300]}"
+        log(msg)
+        if conf.get("FEISHU_NOTIFY") == "1" and not args.dry_run:
+            feishu_send(msg)
+        return 1
+
+    last_ts, days_since = last_syu_info()
+    news = fetch_arch_news(last_ts)
+    rc_sim, upg_text, new_deps, sim_err = simulate_updates()
+    if rc_sim != 0:
+        msg = f"❌ Arch 自动滚包中止：{sim_err}"
+        log(msg)
+        if conf.get("FEISHU_NOTIFY") == "1" and not args.dry_run:
+            feishu_send(msg)
+        return 1
+
+    upg_lines = [l for l in upg_text.splitlines() if l.strip()]
+    _, aur_text = run("paru -Qua", timeout=60, as_user=True)
+    aur_lines = [l for l in aur_text.splitlines() if l.strip()]
+
+    log(f"待更新: 官方 {len(upg_lines)} 个, 新增依赖 {len(new_deps)} 个, AUR {len(aur_lines)} 个, 距上次-Syu {days_since} 天")
+
+    if not upg_lines and not aur_lines:
+        log("系统已是最新，无需滚包")
+        return 0
+
+    # 2. DeepSeek Stage 1 滚前评估
+    pre_sys = (
+        "你是 X230 Arch Linux 无人值守全自动滚包的『滚前风险网关』。"
+        "原则：常规软件、linux 内核、systemd、openssl(仓库已带openssl-3兼容)、docker、nodejs、mesa 等升级一律必须 proceed=true。"
+        "只有当 Arch 官方新闻明确要求手工处理且无法自动完成，或发现明确包冲突时，才设 proceed=false。"
+        "绝不允许因为包多或包含核心组件而偷懒跳过！仅输出 JSON："
+        '{"proceed":true,"need_keyring_first":false,"risk_level":"low|medium|high","restart_parts":["docker|network|dsh"],"summary":"一句话中文结论"}'
+    )
+    core_hits = [l for l in upg_lines if re.match(r"^(linux|linux-firmware|intel-ucode|systemd|glibc|openssl|pacman|mkinitcpio|docker|nodejs|chromium|archlinux-keyring|ca-certificates)\b", l)]
+    pre_user = (
+        f"上次 -Syu: {last_ts} (距今 {days_since} 天)\n"
+        f"/ 可用 {root_gb}G, /boot 可用 {boot_mb}MB\n"
+        f"Arch 新闻(自上次-Syu): {news}\n"
+        f"官方待更新总数: {len(upg_lines)}\n"
+        f"核心包变化:\n" + "\n".join(core_hits[:30]) + "\n"
+        f"新增依赖({len(new_deps)}):\n" + "\n".join(new_deps[:25]) + "\n"
+        f"AUR({len(aur_lines)}):\n" + "\n".join(aur_lines[:15])
+    )
+    pre_ai, pre_model = call_ai(conf["AI_MODELS"], pre_sys, pre_user, max_tokens=600)
+    log(f"DeepSeek 滚前评估({pre_model}): {pre_ai}")
+    if pre_ai is None:
+        # AI 不可用时按安全规则默认放行（除非有 Arch 新闻）
+        has_real_news = any(d != "ERR" for d, _ in news)
+        pre_ai = {
+            "proceed": not has_real_news,
+            "need_keyring_first": any(l.startswith("archlinux-keyring ") for l in upg_lines),
+            "risk_level": "medium",
+            "restart_parts": [],
+            "summary": f"AI超时({pre_model})，规则兜底",
+        }
+
+    if not pre_ai.get("proceed", True):
+        msg = f"⚠️ Arch 滚包被 DeepSeek 闸门拦截（未改动系统）：{pre_ai.get('summary')}"
+        log(msg)
+        if conf.get("FEISHU_NOTIFY") == "1" and not args.dry_run:
+            feishu_send(msg)
+        return 2
+
+    if args.dry_run:
+        print(json.dumps({"dry_run": True, "official": len(upg_lines), "new_deps": len(new_deps), "aur": len(aur_lines), "deepseek_pre": pre_ai}, ensure_ascii=False, indent=2))
+        return 0
+
+    # 3. 战前留证
+    run("/usr/local/bin/x230-backup-state /home/zts/backups/system-state", timeout=30)
+    run("systemctl start dsh-snapshot.service", timeout=60)
+
+    # 4. 执行全量 pacman -Syu --noconfirm
+    need_keyring = pre_ai.get("need_keyring_first") or any(l.startswith("archlinux-keyring ") for l in upg_lines)
+    if need_keyring and days_since >= 14:
+        log("先同步 archlinux-keyring 并紧接全量 -Su...")
+        rc_k, out_k = run("pacman -Sy --needed --noconfirm archlinux-keyring", timeout=180)
+        rc_u, out_u = run("pacman -Su --noconfirm", timeout=1200)
+        syu_out = out_k + "\n" + out_u
+    else:
+        log("执行 pacman -Syu --noconfirm...")
+        rc_u, syu_out = run("pacman -Syu --noconfirm", timeout=1200)
+
+    if rc_u != 0 and re.search(r"signature|GPG|keyring|PGP|信任", syu_out, re.I):
+        log("检测到签名异常，刷新 archlinux-keyring 后重试一次...")
+        run("pacman -Sy --needed --noconfirm archlinux-keyring", timeout=180)
+        rc_u, out_retry = run("pacman -Su --noconfirm", timeout=1200)
+        syu_out += "\n[RETRY]\n" + out_retry
+
+    log(f"pacman -Syu 完成 rc={rc_u}")
+
+    # 5. 可选 AUR 更新
+    aur_rc, aur_out = 0, "跳过"
+    if rc_u == 0 and conf.get("UPDATE_AUR", "1") == "1" and aur_lines:
+        log("执行 paru -Sua --noconfirm --skipreview...")
+        aur_rc, aur_out = run("paru -Sua --noconfirm --skipreview", timeout=900, as_user=True)
+        log(f"paru -Sua rc={aur_rc}")
+
+    # 6. 滚后校验与自愈
+    repaired = []
+    boot_ok = True
+    for bf in ("/boot/vmlinuz-linux", "/boot/initramfs-linux.img", "/boot/intel-ucode.img", "/boot/loader/entries/arch.conf"):
+        if not os.path.exists(bf) or os.path.getsize(bf) == 0:
+            boot_ok = False
+    init_sz = os.path.getsize("/boot/initramfs-linux.img") if os.path.exists("/boot/initramfs-linux.img") else 0
+    if not boot_ok or init_sz < 10485760:
+        log("警告: /boot initramfs 异常，触发 mkinitcpio -P 自愈...")
+        rc_mk, mk_out = run("mkinitcpio -P", timeout=300)
+        repaired.append(f"mkinitcpio -P rc={rc_mk}")
+        init_sz = os.path.getsize("/boot/initramfs-linux.img") if os.path.exists("/boot/initramfs-linux.img") else 0
+
+    # 网络/Clash 守护自愈（若升级了 clash/systemd/openssl/nm）
+    if any(re.match(r"^(clash|systemd|openssl|networkmanager)\b", l, re.I) for l in upg_lines + aur_lines):
+        log("检测到网络/基础库更新，执行 boot-network-guard 自愈校验...")
+        run("/usr/local/bin/boot-network-guard", timeout=80)
+        repaired.append("boot-network-guard")
+
+    # Docker 更新后重启并验活
+    if any(l.startswith("docker ") for l in upg_lines):
+        log("检测到 docker 更新，重启 docker 服务并校验容器...")
+        run("/usr/local/bin/x230-restart-part docker", timeout=90)
+        repaired.append("restart-docker")
+
+    # Nodejs 更新后检查 dsh-web 存活
+    if any(l.startswith("nodejs ") for l in upg_lines):
+        _, hc = run("curl -s -o /dev/null -m 4 -w '%{http_code}' http://100.110.77.111:3080/", timeout=10)
+        if hc.strip() not in ("200", "302", "401"):
+            log(f"dsh-web 健康异常(http={hc})，调用 dsh-restart-safe 自救...")
+            run("/usr/local/bin/dsh-restart-safe", timeout=30)
+            repaired.append("dsh-restart-safe")
+
+    _, pacnew_out = run("pacdiff -o", timeout=15)
+    _, dk_post = run("pacman -Dk", timeout=20)
+    _, failed_units = run("systemctl --failed --no-legend", timeout=10)
+    _, net_check = run("/usr/local/bin/boot-network-guard --check", timeout=25)
+    run("/usr/local/bin/x230-backup-state /home/zts/backups/system-state", timeout=20)
+
+    kernel_upgraded = any(re.match(r"^(linux|systemd|glibc|intel-ucode)\b", l) for l in upg_lines)
+    if kernel_upgraded and rc_u == 0:
+        open("/run/reboot-required", "w").write(f"{day}\n")
+
+    pts_sess = check_interactive_pts()
+    will_reboot = (
+        rc_u == 0
+        and kernel_upgraded
+        and conf.get("AUTO_REBOOT_WHEN_IDLE", "1") == "1"
+        and not pts_sess
+        and init_sz >= 10485760
+    )
+
+    # 7. DeepSeek Stage 2 滚后终审
+    post_sys = (
+        "你是 X230 Arch Linux 自动滚包的『滚后终审官』。"
+        '输出严格 JSON：{"verdict":"pass|warn|fail","headline":"一句话中文总结","findings":["要点"],"next_watch":"下一次重点关注"}'
+    )
+    post_user = (
+        f"official_rc={rc_u} (计划升级 {len(upg_lines)} + 新依赖 {len(new_deps)}), aur_rc={aur_rc} ({len(aur_lines)} 个)\n"
+        f"自愈动作: {repaired}\n"
+        f"initramfs大小: {init_sz}B\n"
+        f"pacdiff -o:\n{pacnew_out.strip() or '无'}\n"
+        f"pacman -Dk: {dk_post.strip()}\n"
+        f"failed_units:\n{failed_units.strip() or '无'}\n"
+        f"网络自检: {net_check.strip()}\n"
+        f"是否升级内核/systemd: {kernel_upgraded}, 活跃pts会话: {bool(pts_sess)}, 计划自动重启: {will_reboot}\n"
+        f"pacman尾部日志:\n{syu_out[-1500:]}"
+    )
+    post_ai, post_model = call_ai(conf["AI_MODELS"], post_sys, post_user, max_tokens=900)
+    if not post_ai:
+        post_ai = {
+            "verdict": "pass" if rc_u == 0 else "fail",
+            "headline": f"pacman rc={rc_u}, AUR rc={aur_rc}",
+            "findings": [],
+            "next_watch": "检查日志",
+        }
+
+    elapsed = round(time.time() - t0, 1)
+    reboot_note = (
+        "已安排 15 秒后执行安全重启（无活跃终端会话）"
+        if will_reboot
+        else ("内核/systemd 已更新，因存在活跃终端会话未强杀重启，空闲时运行 `x230-safe-reboot --now`" if kernel_upgraded else "本次无需重启")
+    )
+
+    report_md = f"""# Arch 自动滚包审查 · {day}
+
+> **{post_ai.get('verdict')}** ｜ 耗时 {elapsed}s ｜ 滚前 `{pre_model}` ｜ 滚后 `{post_model}` ｜ 官方 `{len(upg_lines)}+{len(new_deps)}` (rc={rc_u}) ｜ AUR `{len(aur_lines)}` (rc={aur_rc})
+>
+> {post_ai.get('headline')}
+
+## 关键状态
+- **自愈动作**：{', '.join(repaired) if repaired else '无'}
+- **`/boot/initramfs-linux.img`**：`{init_sz}` B
+- **`.pacnew/.pacsave`**：{pacnew_out.strip() or '无'}
+- **异常服务**：{failed_units.strip() or '无'}
+- **网络门禁**：`{net_check.strip()}`
+- **重启策略**：{reboot_note}
+
+## 审查发现
+""" + "\n".join(f"- {x}" for x in (post_ai.get("findings") or ["无异常"])) + f"""
+
+## 明日关注
+- {post_ai.get('next_watch', '-')}
+
+## pacman 日志摘要
+```text
+{syu_out[-3500:]}
+```
+"""
+    report_path = write_report(day, report_md)
+    log(f"报告已写入 {report_path}")
+
+    if conf.get("FEISHU_NOTIFY") == "1":
+        badge = "✅" if rc_u == 0 and post_ai.get("verdict") == "pass" else ("⚠️" if rc_u == 0 else "❌")
+        feishu_msg = (
+            f"{badge} X230 Arch 自动滚包 ({day})\n"
+            f"结果: {post_ai.get('headline')}\n"
+            f"官方: {len(upg_lines)}+{len(new_deps)}包(rc={rc_u}) | AUR: {len(aur_lines)}包(rc={aur_rc})\n"
+            f"网络: {net_check.strip()}\n"
+            f"重启: {reboot_note}\n"
+            f"报告: {report_path}"
+        )
+        f_rc = feishu_send(feishu_msg)
+        log(f"飞书推送: {f_rc}")
+
+    if will_reboot:
+        log("满足无活跃 pts 会话且内核已升级条件，派发 15s 后 x230-safe-reboot --now...")
+        run("systemd-run --on-active=15s --unit=arch-post-roll-reboot /usr/local/bin/x230-safe-reboot --now", timeout=15)
+
+    return 0 if rc_u == 0 else rc_u
+
+
+if __name__ == "__main__":
+    sys.exit(main())

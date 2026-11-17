@@ -1,0 +1,30 @@
+[Unit]
+Description=Reverse SSH tunnel HK 17000-17012 to X230 webapps
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=zts
+Environment=HOME=/home/zts
+ExecStart=/usr/bin/ssh -NT -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=20 -o ServerAliveCountMax=3 -o TCPKeepAlive=yes -o ConnectTimeout=10 \
+  -R 127.0.0.1:18000:100.110.77.111:3800 \
+  -R 127.0.0.1:18001:100.110.77.111:3889 \
+  -R 127.0.0.1:18002:100.110.77.111:3890 \
+  -R 127.0.0.1:18003:100.110.77.111:3891 \
+  -R 127.0.0.1:18004:100.110.77.111:3892 \
+  -R 127.0.0.1:18005:100.110.77.111:3893 \
+  -R 127.0.0.1:18006:100.110.77.111:3894 \
+  -R 127.0.0.1:18007:100.110.77.111:3895 \
+  -R 127.0.0.1:18008:100.110.77.111:3896 \
+  -R 127.0.0.1:18009:100.110.77.111:3897 \
+  -R 127.0.0.1:18010:100.110.77.111:3898 \
+  -R 127.0.0.1:18011:100.110.77.111:3900 \
+  -R 127.0.0.1:18012:100.110.77.111:3888 \
+  hk
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

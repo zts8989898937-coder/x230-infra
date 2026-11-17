@@ -1,0 +1,19 @@
+#!/bin/bash
+# 续期公网入口注入的 dsh 会话 cookie（30 天有效期，每周刷新一次）
+set -uo pipefail
+LOG=/home/zts/.dsh/public-cookie-refresh.log
+LOGIN=/home/zts
+exec >>"$LOG" 2>&1
+echo "=== $(date -Is)"
+fail() { echo "FAIL: $*"; /usr/local/bin/ntfy "DSH 公网 cookie 续期失败" high "$*" 2>/dev/null || true; exit 1; }
+
+TOKEN=$(sudo -n journalctl -u dsh-web --no-pager 2>/dev/null | grep -oE 'token=[A-Za-z0-9_-]+' | tail -1 | cut -d= -f2)
+[ -n "$TOKEN" ] || fail "journal 里没有 token（日志轮转或服务刚重启？）"
+
+COOKIE=$(sudo -u zts HOME=$LOGIN ssh -o BatchMode=yes -o ConnectTimeout=10 hk \
+  "curl -si -m 10 -H 'Host: 100.110.77.111:3080' 'http://127.0.0.1:19080/?token=$TOKEN' | sed -n 's/^[Ss]et-[Cc]ookie: \\([^;]*\\).*/\\1/p'")
+[ -n "$COOKIE" ] || fail "token 换 cookie 失败（隧道断？token 失效？）"
+
+OUT=$(sudo -u zts HOME=$LOGIN ssh -o BatchMode=yes -o ConnectTimeout=10 hk \
+  "umask 077; printf 'proxy_set_header Cookie \"%s\";\n' '$COOKIE' > /www/server/nginx/conf/dsh-cookie.conf && chown root:www /www/server/nginx/conf/dsh-cookie.conf && chmod 640 /www/server/nginx/conf/dsh-cookie.conf && nginx -t >/dev/null 2>&1 && systemctl reload nginx && echo RELOADED")
+case "$OUT" in *RELOADED*) echo "OK cookie refreshed (len ${#COOKIE})";; *) fail "推送/重载 nginx 失败: $OUT";; esac

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# 对当前 git 仓库的未提交改动做代码评审：gpt-review [额外要求]
+set -uo pipefail
+exec codex -p gpt-high exec review --uncommitted ${1+"$@"} </dev/null

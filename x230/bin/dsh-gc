@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# dsh-gc —— 回收 DSH 遗留资源，防止内存/CPU 被闲置进程吃掉
+#   背景：agent 任务会启动独立的 chromium（PPID=1 成为孤儿），任务结束后没人回收；
+#         dsh 的 subprocess 层会为每个"组长已死但成员还活着"的进程组每 15ms 轮询一次
+#         /proc（已打补丁降到 250ms），孤儿浏览器是最常见的内存大头。
+#   策略：只回收「PPID=1 的孤儿 chromium 主进程」且「存活 > 2h 且 CPU 近 0」；
+#         其它孤儿进程组只记录到日志，不自动杀（Xvfb/面板代理等可能是需要的）。
+#   用法：dsh-gc           正常执行并写 /var/log/dsh-gc.log
+#         dsh-gc --dry-run 只打印不动作
+set -uo pipefail
+
+LOG=/var/log/dsh-gc.log
+HOME_DIR=/home/zts
+MAX_AGE=7200   # 秒
+DRY=0
+[ "${1:-}" = "--dry-run" ] && DRY=1
+now=$(date '+%F %T')
+say() { echo "$*"; [ "$DRY" -eq 1 ] || echo "$now $*" >> "$LOG"; }
+
+# 1) 孤儿 chromium：主进程 + 子进程整树回收
+for pid in $(pgrep -f 'chromium.*--remote-debugging-port' 2>/dev/null); do
+  cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null) || continue
+  case "$cmd" in *--type=*) continue ;; esac          # 跳过 renderer/gpu 子进程
+  [ "$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)" = "1" ] || continue  # 只回收孤儿
+  case "$cmd" in *"user-data-dir=$HOME_DIR/.dsh/"*) ;; *) continue ;; esac
+  age=$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' '); age=${age:-0}
+  cpu=$(ps -o %cpu= -p "$pid" 2>/dev/null | tr -d ' '); cpu=${cpu:-0}
+  if [ "$age" -gt "$MAX_AGE" ] && [ "${cpu%%.*}" -lt 2 ]; then
+    say "reap chromium pid=$pid age=${age}s cpu=${cpu}% dir=$(echo "$cmd" | grep -o 'user-data-dir=[^ ]*')"
+    [ "$DRY" -eq 1 ] && continue
+    kill -TERM "$pid" 2>/dev/null; sleep 2; kill -KILL "$pid" 2>/dev/null
+  fi
+done
+
+# 2) 孤儿进程组（组长已死、成员还活着）
+#    dsh 的 subprocess teardown 会一直等这种组，每 15ms 扫一遍 /proc（补丁后 250ms）；
+#    因此超过 12h 且全员非白名单的组，直接整组回收，避免 CPU 空转。
+ORPHAN_REAP_AGE=${ORPHAN_REAP_AGE:-43200}
+for g in $(ps -eo pgrp= --no-headers | sort -u); do
+  [ "$g" = "0" ] && continue
+  ps -p "$g" -o pid= >/dev/null 2>&1 && continue
+  members=$(ps -eo pid=,pgrp=,etimes=,args= --no-headers | awk -v g="$g" '$2==g' | head -5)
+  [ -n "$members" ] || continue
+  keep=0; old=1
+  while read -r pid _ etime args; do
+    [ -n "${pid:-}" ] || continue
+    case "${args:-}" in
+      Xvfb*|adb*|/usr/bin/adb*|sshd*|tailscaled*|/home/zts/.local/bin/agy*|gdrv*) keep=1 ;;
+    esac
+    [ "${etime:-0}" -gt "$ORPHAN_REAP_AGE" ] || old=0
+  done <<< "$members"
+  if [ "$keep" -eq 0 ] && [ "$old" -eq 1 ]; then
+    say "reap orphan-group pgrp=$g (age>${ORPHAN_REAP_AGE}s): $(echo "$members" | tr '\n' ';')"
+    [ "$DRY" -eq 0 ] && kill -KILL -- "-$g" 2>/dev/null
+  else
+    say "orphan-group (keep) pgrp=$g: $(echo "$members" | tr '\n' ';')"
+  fi
+done
+
+# 3) 清理超过 1 天的 chromium 临时 profile（/tmp 是 tmpfs，白占内存）
+if [ -d /tmp ]; then
+  for d in /tmp/cr-*; do
+    [ -d "$d" ] || continue
+    mtime=$(stat -c %Y "$d" 2>/dev/null || echo 0)
+    if [ $(( $(date +%s) - mtime )) -gt 86400 ]; then
+      say "rm stale tmp profile $d"
+      [ "$DRY" -eq 0 ] && rm -rf "$d"
+    fi
+  done
+fi
+exit 0

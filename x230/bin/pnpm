@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/node /home/zts/.local/lib/node_modules/pnpm/bin/pnpm.cjs "$@"

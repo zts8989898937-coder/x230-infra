@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# dsh-watchdog — 定时健康检查 + 分级自救
+# 由 dsh-watchdog.timer 每 2 分钟触发；状态在 ~/.local/state/dsh-watchdog.state。
+#
+# 2026-11-08 v3：按用户要求去掉「等人处理」，改成分级自动抢救：
+#   stage 1 重启 dsh-web
+#   stage 2 恢复 last-good 配置后再重启
+#   stage 3 恢复最近一次备份归档（非当天）再重启
+#   stage 4 全失败：写 critical 日志 + 保持每 2 分钟重试（永不停手）
+# 同时保留：依赖服务拉起、滚包 timer 兜底、配置未激活告警、两个插件补丁自愈。
+# 环境变量（仅用于演练）：WD_SIM=1 跳过依赖/定时器/补丁检查，WD_HEALTH_CMD/WD_RESTART 可替换。
+set -u
+SIM="${WD_SIM:-0}"
+LOG="${WD_LOG:-/home/zts/.local/state/dsh-watchdog.log}"
+STATE_DIR="${WD_STATE_DIR:-/home/zts/.local/state}"
+URL="${WD_URL:-http://100.110.77.111:3080}"
+PATCH="${WD_PATCH:-/home/zts/.dsh/profiles/web/cordis.patch.yml}"
+BACKUP_ROOT="${WD_BACKUP_ROOT:-/home/zts/agent-share/工作产出/05-备份归档}"
+ROLL_STATE="${WD_ROLL_STATE:-/var/lib/dsh-roll}"
+RESTART_CMD="${WD_RESTART:-systemctl restart dsh-web}"
+STATE="$STATE_DIR/dsh-watchdog.state"
+CONF_STATE="$STATE_DIR/dsh-watchdog.config"
+mkdir -p "$STATE_DIR" 2>/dev/null
+log() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
+
+health_code() {
+  if [ -n "${WD_HEALTH_CMD:-}" ]; then
+    eval "$WD_HEALTH_CMD" 2>/dev/null || echo 000
+    return 0
+  fi
+  curl -s -o /dev/null -m 8 -w '%{http_code}' "$URL/" 2>/dev/null || echo 000
+}
+
+health_ok() { case "$(health_code)" in 401|200|302) return 0 ;; *) return 1 ;; esac; }
+
+restore_config() {
+  [ -f "$1" ] || return 1
+  cp -f "$1" "$PATCH" 2>/dev/null || return 1
+  chown zts:zts "$PATCH" 2>/dev/null
+  return 0
+}
+
+latest_backup_patch() {
+  local today d
+  today=$(date +%Y%m%d)
+  for d in $(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+             | grep -E '^[0-9]{8}$' | sort -r); do
+    [ "$d" = "$today" ] && continue
+    [ -f "$BACKUP_ROOT/$d/cordis.patch.yml" ] && { echo "$BACKUP_ROOT/$d/cordis.patch.yml"; return 0; }
+  done
+  return 1
+}
+
+rescue_round() {
+  local stage
+  for stage in 1 2 3; do
+    case "$stage" in
+      1) log "rescue stage 1/3: restart dsh-web" ;;
+      2) log "rescue stage 2/3: restore last-good config"; restore_config "$ROLL_STATE/last-good-cordis.patch.yml" || { log "last-good 缺失，跳到 stage 3"; continue; } ;;
+      3) local arch; arch=$(latest_backup_patch) || { log "没有可用的备份归档，跳过 stage 3"; continue; }
+         log "rescue stage 3/3: restore archive $arch"; restore_config "$arch" || continue ;;
+    esac
+    $RESTART_CMD 2>/dev/null || true
+    sleep 10
+    if health_ok; then
+      log "rescue stage $stage succeeded"
+      return 0
+    fi
+    log "rescue stage $stage failed (http=$(health_code))"
+  done
+  log "CRITICAL: all rescue stages failed；保持每 2 分钟重试，不做人工等待"
+  return 1
+}
+
+fail=0; reason=""
+
+# 1) 依赖服务（掉了就立刻拉起；演练时跳过）
+if [ "$SIM" = 0 ]; then
+  for u in dsh-tunnel agy-tunnel agy-bridge; do
+    if ! systemctl is-active --quiet "$u"; then
+      log "restart $u (inactive)"
+      systemctl restart "$u" 2>/dev/null || true
+    fi
+  done
+fi
+
+# 2) dsh-web 进程 + 端口
+if [ "$SIM" = 0 ] && ! systemctl is-active --quiet dsh-web; then
+  fail=1; reason="dsh-web 进程不在"
+fi
+code=$(health_code)
+# 2026-11-09 审计修正：原来只把 000 当故障，5xx（进程活着但服务崩了）会被当成健康。
+# 401/403 是未登录的正常响应，200/302 是正常入口，都算活着。
+case "$code" in
+  000) fail=1; reason="${reason:+$reason；}端口无响应" ;;
+  5*)  fail=1; reason="${reason:+$reason；}HTTP $code（服务端错误）" ;;
+esac
+
+# 3) 连续 2 次失败才动手，避免瞬时抖动
+if [ "$fail" = 1 ]; then
+  n=$(cat "$STATE" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$STATE"
+  log "unhealthy ($reason, http=$code) fail=$n"
+  if [ "$n" -ge 2 ]; then
+    rescue_round
+    echo 0 > "$STATE"
+  fi
+else
+  echo 0 > "$STATE"
+fi
+
+if [ "$SIM" != 0 ]; then
+  exit 0
+fi
+
+# 4) 04:00 滚包定时器兜底
+if ! systemctl is-active --quiet dsh-nightly-roll.timer 2>/dev/null; then
+  log "rearm dsh-nightly-roll.timer (inactive)"
+  systemctl start dsh-nightly-roll.timer 2>/dev/null || true
+fi
+
+# 5) 配置激活告警：按签名去重，只记一次
+CONF_ERR=$(journalctl -u dsh-web --since '-8 min' --no-pager 2>/dev/null \
+  | grep -E 'entry did not activate|ValidationError' | tail -2 | tr '\n' ' ')
+if [ -n "$CONF_ERR" ]; then
+  SIG=$(printf '%s' "$CONF_ERR" | md5sum | cut -c1-12)
+  LAST=$(cat "$CONF_STATE" 2>/dev/null || echo "")
+  if [ "$SIG" != "$LAST" ]; then
+    echo "$SIG" > "$CONF_STATE"
+    log "config activation warning: $CONF_ERR"
+  fi
+fi
+
+# 6) 技能中心 LAN 信任补丁自愈（只补文件、不自动重启）
+if ! /usr/local/bin/dsh-skill-explorer-lan-trust-patch --check >/dev/null 2>&1; then
+  if sudo -u zts /usr/local/bin/dsh-skill-explorer-lan-trust-patch --quiet >>"$LOG" 2>&1; then
+    log "skill-explorer LAN trust patch re-applied (restart dsh-web to take effect)"
+  else
+    log "skill-explorer LAN trust patch FAILED (anchor missing? upstream changed)"
+  fi
+fi
+
+# 7) 侧边栏 crypto.randomUUID 降级补丁自愈（只补文件、不自动重启）
+if ! sudo -u zts /usr/local/bin/dsh-better-sidebar-safe-uuid --check >/dev/null 2>&1; then
+  if sudo -u zts /usr/local/bin/dsh-better-sidebar-safe-uuid --quiet >>"$LOG" 2>&1; then
+    log "better-sidebar safe-uuid patch re-applied (refresh browser to take effect)"
+  else
+    log "better-sidebar safe-uuid patch FAILED (anchor missing? upstream changed)"
+  fi
+fi
+
+# 8) 共享 KEY 软链兜底（store.js 的 rename 会把软链换成实体文件；补丁在写入侧，这里再兜一层）
+if sudo -u zts /usr/local/bin/dsh-key-symlink-fix --quiet >>"$LOG" 2>&1; then
+  :
+else
+  log "key-symlink-fix FAILED"
+fi
+# 9) bilibili MCP 本地补丁（只读闸门 + refresh_token 落盘）
+if ! /usr/local/bin/dsh-bili-mcp-patch --check >/dev/null 2>&1; then
+  if /usr/local/bin/dsh-bili-mcp-patch --quiet >>"$LOG" 2>&1; then
+    log "bilibili MCP patch re-applied (restart dsh-web to take effect)"
+  else
+    log "bilibili MCP patch FAILED (anchor missing? upstream changed)"
+  fi
+fi
+# 10) 补丁/配置体检（只记录，不重启）：探针说 degraded 时每小时记一次
+if [ "$SIM" = 0 ]; then
+  STAMP="$STATE_DIR/dsh-health-probe.stamp"
+  now=$(date +%s); last=$(cat "$STAMP" 2>/dev/null || echo 0)
+  verdict=$(/usr/local/bin/dsh-health-probe --quiet 2>/dev/null || true)
+  if [ "$verdict" != "healthy" ] && [ $((now - last)) -ge 3600 ]; then
+    detail=$(/usr/local/bin/dsh-health-probe 2>/dev/null | tr '\n' ' ')
+    log "health probe: ${verdict:-unknown} $detail"
+    echo "$now" > "$STAMP" 2>/dev/null || sudo -u zts sh -c "echo $now > $STAMP" 2>/dev/null || true
+  fi
+fi

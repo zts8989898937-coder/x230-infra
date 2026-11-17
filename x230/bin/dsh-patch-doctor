@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# dsh-patch-doctor — 逐条检查「本地补丁是否真的打在文件里」
+#
+# 背景（2026-11-09 四域审计 P1）：所有补丁都挂在 systemd 的
+# `ExecStartPre=-…`（减号 = 失败也继续）或看门狗里，打了没有没人知道；
+# 插件一升级，补丁静默退回原版，症状要到用户发现才暴露。
+# 本脚本只读，给每条例一个 PASS/MISSING/PARTIAL，退出码 = 缺几条。
+set -uo pipefail
+missing=0
+rows=()
+
+check_cmd() { # name, cmd...
+  local name=$1; shift
+  if "$@" >/dev/null 2>&1; then rows+=("PASS|$name|$*"); else rows+=("MISSING|$name|$*"); missing=$((missing+1)); fi
+}
+
+check_file() { # name, file, marker
+  local name=$1 file=$2 marker=$3
+  if [ ! -f "$file" ]; then rows+=("N/A|$name|文件不存在: $file"); return; fi
+  if grep -qF -- "$marker" "$file"; then rows+=("PASS|$name|$marker"); else rows+=("MISSING|$name|$marker @ $file"); missing=$((missing+1)); fi
+}
+
+ME="$HOME/.dsh/profiles/web/node_modules/dsh-memory-evolve/lib"
+
+check_cmd "skill-explorer LAN 信任" /usr/local/bin/dsh-skill-explorer-lan-trust-patch --check
+check_cmd "侧边栏 crypto.randomUUID" /usr/local/bin/dsh-better-sidebar-safe-uuid --check
+check_cmd "bilibili MCP（只读+token）" /usr/local/bin/dsh-bili-mcp-patch --check
+check_file "memory KEY 软链写入" "$ME/store.js" "function writeTarget"
+check_file "技能 frontmatter 块标量" "$ME/skills.js" "const block = /^([|>])"
+check_file "技能同步保留用户策略" "$ME/coi/skills-sync.js" "export function mergeUserPolicy"
+check_file "dsh-web KEY 兜底 drop-in" /etc/systemd/system/dsh-web.service.d/55-key-symlink.conf "dsh-key-symlink-fix"
+check_file "dsh-web bilibili drop-in" /etc/systemd/system/dsh-web.service.d/56-bili-mcp.conf "dsh-bili-mcp-patch"
+check_file "看门狗 5xx 判故障" /usr/local/bin/dsh-watchdog '5*)  fail=1'
+
+printf '%-8s %-28s %s\n' 状态 名称 依据
+for r in "${rows[@]}"; do IFS='|' read -r st name detail <<<"$r"; printf '%-8s %-28s %s\n' "$st" "$name" "$detail"; done
+echo "----"
+if [ "$missing" -eq 0 ]; then echo "全部补丁在位"; else echo "$missing 条补丁缺失（升级后重打即可）"; fi
+exit "$missing"

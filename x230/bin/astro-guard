@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""astro-guard — 本机渲染审计：记录任何 blender 进程及其命令行，判定是否在渲染。
+用法: astro-guard --report | --watch | --log
+"""
+import argparse, json, os, re, subprocess, sys, time, datetime
+
+LOG = '/home/zts/.local/state/astro-guard.log'
+RENDER_RE = re.compile(r'(\s-f\s|\s-a\s|--render-frame|--render-anim|--render\b|bpy\.ops\.render|render\.render\()')
+
+def procs():
+    out = []
+    try:
+        p = subprocess.run(['ps','-eo','pid,etimes,args'], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return out
+    for line in p.stdout.splitlines()[1:]:
+        parts = line.strip().split(None, 2)
+        if len(parts) < 3: continue
+        pid, et, args = parts
+        toks = args.split()
+        is_blender = bool(toks) and os.path.basename(toks[0]) in ('blender', 'blender-launcher')
+        if not is_blender and toks and os.path.basename(toks[0]) == 'xvfb-run' and 'blender' in toks:
+            is_blender = True
+        if is_blender:
+            out.append({'pid': int(pid), 'etimes': int(et), 'args': args[:300], 'render': bool(RENDER_RE.search(args))})
+    return out
+
+def snap():
+    ps = procs()
+    return {'ts': datetime.datetime.now().isoformat(timespec='seconds'),
+            'blender_procs': len(ps), 'rendering': [p for p in ps if p['render']],
+            'all': ps}
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--report', action='store_true'); ap.add_argument('--watch', action='store_true')
+    ap.add_argument('--log', action='store_true'); ap.add_argument('--since', default=None)
+    a = ap.parse_args()
+    if a.log:
+        if not os.path.exists(LOG): print('(无审计日志)'); return 0
+        for line in open(LOG):
+            if not a.since or line >= a.since: print(line.rstrip())
+        return 0
+    s = snap()
+    print(json.dumps(s, ensure_ascii=False, indent=2))
+    if a.watch:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        seen = set()
+        while True:
+            for p in procs():
+                key = (p['pid'], p['args'][:80])
+                if key in seen: continue
+                seen.add(key)
+                with open(LOG, 'a') as f:
+                    f.write(json.dumps({'ts': datetime.datetime.now().isoformat(timespec='seconds'), **p}, ensure_ascii=False) + '\n')
+                if p['render']:
+                    print(f"!! RENDER DETECTED pid={p['pid']} args={p['args'][:120]}", flush=True)
+            time.sleep(5)
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main())

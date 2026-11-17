@@ -1,0 +1,15 @@
+[Unit]
+Description=VS Code Web LAN/Tailscale TLS proxy (8444 -> 8443)
+After=network-online.target vscode-web.service
+Wants=vscode-web.service
+
+[Service]
+ExecStart=/usr/local/bin/code-web-lan-proxy
+Restart=always
+RestartSec=2
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

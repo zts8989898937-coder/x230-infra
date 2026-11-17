@@ -1,0 +1,7 @@
+[Unit]
+Description=X230 daily health report via ntfy
+After=network-online.target ntfy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/x230-report.sh

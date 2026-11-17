@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""dsh-lan-url — 生成带当前 launch token 的 DSH 局域网登录链接（可选二维码）。
+
+背景（读的是 DSH 源码，不是猜的）：
+  @deepseek-ai/dsh-client-connection 的 BrowserAuth 在进程启动时生成一次性
+  launch token。GET /?token=<launch token> 会 303 跳到 ./ 并种下一枚
+  30 天有效、HttpOnly、SameSite=Strict 的 cookie；cookie 名由 Host(host:port)
+  的 sha256 派生，所以 **每台设备、每个入口地址要各自换一次**。
+  签名密钥持久化在 ~/.dsh/.credentials.yaml（key 名 client-connection /
+  browser-session），所以换过一次 cookie 以后，重启、升级都不用重新换。
+
+用法：
+  dsh-lan-url              # 打印局域网 + Tailscale 登录链接，并校验 token
+  dsh-lan-url --qr         # 再在终端里打一个二维码（给另一台设备扫）
+  dsh-lan-url --png /tmp/x.png
+  dsh-lan-url --json       # 机器可读
+"""
+
+from __future__ import annotations
+
+import argparse
+import http.client
+import json
+import re
+import subprocess
+import sys
+
+UNIT = "dsh-web"
+LAN_PORT = 3082
+TS_PORT = 3080
+COOKIE_DAYS = 30
+
+
+def run(cmd: list[str]) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        return ""
+
+
+def addresses() -> list[tuple[str, int]]:
+    """(ip, port) 候选，私网优先。"""
+    out = run(["ip", "-4", "-o", "addr", "show", "scope", "global"])
+    ips: list[str] = []
+    for line in out.splitlines():
+        m = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)/", line)
+        if m and not m.group(1).startswith("127."):
+            ips.append(m.group(1))
+
+    def rank(ip: str) -> int:
+        if ip.startswith("192.168.8."):
+            return 0
+        if ip.startswith("192.168."):
+            return 1
+        if ip.startswith("100."):
+            return 2
+        return 3
+
+    def servable(ip: str) -> bool:
+        """只保留 dsh-web 真正在听的网段：局域网 192.168.* 与 Tailscale 100.64/10。"""
+        if ip.startswith("192.168."):
+            return True
+        if ip.startswith("100."):
+            second = int(ip.split(".")[1])
+            return 64 <= second <= 127
+        return False
+
+    result = []
+    for ip in sorted((ip for ip in dict.fromkeys(ips) if servable(ip)), key=rank):
+        # Tailscale 上 dsh-web 直接监听 3080；局域网走 socket-proxyd 3082
+        result.append((ip, TS_PORT if ip.startswith("100.") else LAN_PORT))
+    return result
+
+
+def current_token() -> str | None:
+    out = run(["sudo", "-n", "journalctl", "-u", UNIT, "--no-pager", "-o", "cat"])
+    if "token=" not in out:
+        out = run(["sudo", "-n", "journalctl", "-u", UNIT, "--no-pager"])
+    tokens = re.findall(r"token=([A-Za-z0-9_-]{20,})", out)
+    return tokens[-1] if tokens else None
+
+
+def probe(ip: str, port: int, token: str) -> tuple[int | None, str]:
+    conn = http.client.HTTPConnection(ip, port, timeout=8)
+    try:
+        conn.request("GET", f"/?token={token}", headers={"Host": f"{ip}:{port}"})
+        resp = conn.getresponse()
+        resp.read(2048)
+        return resp.status, resp.getheader("set-cookie") or ""
+    except Exception as exc:  # noqa: BLE001 - 只要结论
+        return None, str(exc)
+    finally:
+        conn.close()
+
+
+def qr_png(text: str, path: str) -> bool:
+    return (
+        subprocess.run(
+            ["qrencode", "-o", path, "-t", "PNG", "-s", "10", "-m", "2", text],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
+def qr_terminal(text: str) -> str:
+    out = subprocess.run(
+        ["qrencode", "-t", "ANSIUTF8", "-m", "1", text], capture_output=True, text=True
+    )
+    return out.stdout if out.returncode == 0 else ""
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="DSH 局域网登录链接生成器")
+    ap.add_argument("--port", type=int, help="覆盖端口（默认局域网 3082 / Tailscale 3080）")
+    ap.add_argument("--qr", action="store_true", help="终端打印二维码")
+    ap.add_argument("--png", metavar="FILE", help="二维码写到 PNG")
+    ap.add_argument("--json", action="store_true", help="输出 JSON")
+    ap.add_argument("--no-check", action="store_true", help="不校验 token")
+    args = ap.parse_args()
+
+    token = current_token()
+    if not token:
+        print("找不到 launch token：journal 里没有 token=…（服务刚重启？日志被清？）", file=sys.stderr)
+        return 1
+
+    cands = addresses()
+    if not cands:
+        print("找不到可用的本机 IPv4 地址", file=sys.stderr)
+        return 1
+
+    rows = []
+    for ip, port in cands:
+        port = args.port or port
+        url = f"http://{ip}:{port}/?token={token}"
+        status, cookie = (None, "skipped") if args.no_check else probe(ip, port, token)
+        rows.append(
+            {
+                "ip": ip,
+                "port": port,
+                "url": url,
+                "status": status,
+                "ok": True if args.no_check else status == 303,
+                "cookie_length": len(cookie) if isinstance(cookie, str) else 0,
+            }
+        )
+
+    if args.json:
+        print(json.dumps({"token_len": len(token), "entries": rows}, ensure_ascii=False, indent=2))
+    else:
+        ok_rows = [r for r in rows if r["ok"]]
+        print(f"# DSH 局域网登录链接（每台设备打开一次即可，cookie 有效 {COOKIE_DAYS} 天）\n")
+        for r in rows:
+            flag = "•" if r["status"] is None and args.no_check else ("✅" if r["ok"] else "✖")
+            if r["status"] is None and r["ok"] is False:
+                flag = "✖ 连不上"
+            elif r["status"] not in (303, None):
+                flag = f"✖ HTTP {r['status']}"
+            print(f"{flag}  {r['url']}")
+        print()
+        if ok_rows:
+            print(f"设备扫码/点链接后会自动跳回 / 并写入 cookie；之后重启服务也不用再登录。")
+        else:
+            print("⚠️  所有入口的 token 都换不到 cookie：多半是 dsh-web 重启过，改用最新 token 再试。")
+        if args.qr and ok_rows:
+            print("\n" + qr_terminal(ok_rows[0]["url"]))
+
+    if args.png:
+        target = next((r for r in rows if r["ok"]), rows[0])
+        if qr_png(target["url"], args.png):
+            print(f"二维码已写入 {args.png}", file=sys.stderr)
+        else:
+            print("二维码生成失败（qrencode 可用？）", file=sys.stderr)
+            return 1
+
+    return 0 if any(r["ok"] for r in rows) else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

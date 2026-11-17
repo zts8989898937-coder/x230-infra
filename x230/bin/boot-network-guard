@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# boot-network-guard — 开机/重启后网络与 Agent 出口安全门禁
+# 目标：确保物理网络 → HK直连路由 → Tailscale标记修复 → Clash TUN → AI专用节点固定
+#       → Google/ChatGPT 风控与连通性探活 全部达标后再放行 agy/dsh 等服务。
+# 用法：
+#   boot-network-guard          # 完整开机守护（带必要修复与 ntfy 播报）
+#   boot-network-guard --check  # 只读自检（不切节点、不断连接、不触发告警重配）
+set -u
+
+CHECK_ONLY=0
+[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+SOCK="${CLASH_SOCK:-/run/clash-verge-service/users/1000/verge-mihomo.sock}"
+AI_GROUP="🤖 AI专用"
+ENC_GROUP=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$AI_GROUP")
+CANDS=("日本4-VIP88a" "日本1-VIP88a" "日本5-VIP88a" "2倍率-美国05" "10倍率-ai专用-美国05a")
+LOG="/var/log/boot-network-guard.log"
+NTFY_URL="http://127.0.0.1:2586/x230-<REDACTED_TOPIC>"
+
+log() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG" >/dev/null 2>&1 || true; }
+
+wait_for() {
+  local desc="$1" max_sec="$2"; shift 2
+  local i=0
+  while [ "$i" -lt "$max_sec" ]; do
+    if "$@" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+  log "TIMEOUT(${max_sec}s): $desc"
+  return 1
+}
+
+has_default_route() {
+  ip route show default | grep -q '^default '
+}
+
+clash_ready() {
+  [ -S "$SOCK" ] && ss -tln | grep -q ':7897 ' && \
+    curl -sf --unix-socket "$SOCK" http://localhost/configs | python3 -c "import json,sys;sys.exit(0 if json.load(sys.stdin).get('tun',{}).get('enable') else 1)"
+}
+
+cur_ai_node() {
+  curl -s -m 4 --unix-socket "$SOCK" "http://localhost/proxies/$ENC_GROUP" \
+    | python3 -c "import json,sys;print(json.load(sys.stdin).get('now',''))" 2>/dev/null
+}
+
+set_ai_node() {
+  curl -s -m 6 -X PUT --unix-socket "$SOCK" "http://localhost/proxies/$ENC_GROUP" \
+    -H 'Content-Type: application/json' -d "{\"name\":\"$1\"}" -o /dev/null
+}
+
+probe_g() { curl -s -x http://127.0.0.1:7897 -m 8 -o /dev/null -w '%{http_code}:%{time_total}' https://www.googleapis.com/generate_204 2>/dev/null || echo "000:0"; }
+probe_c() { curl -s -x http://127.0.0.1:7897 -m 10 -o /dev/null -w '%{http_code}:%{time_total}' https://chatgpt.com/backend-api/ps/mcp 2>/dev/null || echo "000:0"; }
+probe_ip() { curl -s -x http://127.0.0.1:7897 -m 5 https://chatgpt.com/cdn-cgi/trace 2>/dev/null | awk -F= '/^ip=/{print $2}' | head -c 45; }
+probe_cn() { curl -s --noproxy '*' -m 4 -o /dev/null -w '%{http_code}' https://www.baidu.com 2>/dev/null || echo "000"; }
+
+ok_probe() {
+  local res="$1" expect="$2"
+  local code="${res%%:*}" t="${res##*:}"
+  [ "$code" = "$expect" ] && awk -v t="${t:-99}" 'BEGIN{exit !(t<5.0)}'
+}
+
+close_ai_stale_conns() {
+  local target="$1"
+  python3 - "$SOCK" "$AI_GROUP" "$target" <<'PY' 2>/dev/null || true
+import json, socket, http.client, sys
+sock_path, sel, target = sys.argv[1:4]
+class UnixHTTP(http.client.HTTPConnection):
+    def __init__(self, p):
+        super().__init__("localhost")
+        self.p = p
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self.p)
+c = UnixHTTP(sock_path)
+c.request("GET", "/connections")
+conns = json.loads(c.getresponse().read()).get("connections") or []
+for cn in conns:
+    chains = cn.get("chains") or []
+    if sel in chains and target not in chains and cn.get("id"):
+        d = UnixHTTP(sock_path)
+        d.request("DELETE", f"/connections/{cn['id']}")
+        d.getresponse().read()
+PY
+}
+
+degraded=0
+notes=()
+
+# 1. 物理路由就绪（绕过 NetworkManager-wait-online 被 mask 的空窗）
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  wait_for "默认路由" 25 has_default_route || { degraded=1; notes+=("无默认路由"); }
+else
+  has_default_route || { degraded=1; notes+=("无默认路由"); }
+fi
+
+# 2. HK 直连策略路由 + Tailscale fwmark 修复
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  [ -x /usr/local/bin/hk-direct-route.sh ] && /usr/local/bin/hk-direct-route.sh up || true
+  [ -x /usr/local/bin/ts-mark-fix.sh ] && /usr/local/bin/ts-mark-fix.sh || true
+fi
+ip rule list | grep -q '156.239.8.225' || { degraded=1; notes+=("缺HK直连规则"); }
+
+# 3. Clash TUN 与控制面就绪
+if [ "$CHECK_ONLY" -eq 0 ]; then
+  wait_for "Clash socket/7897/TUN" 25 clash_ready || { degraded=1; notes+=("Clash TUN未就绪"); }
+else
+  clash_ready || { degraded=1; notes+=("Clash TUN未就绪"); }
+fi
+
+# 4. 立即锁死 AI 专用节点（不等开机 45s timer）
+if [ "$CHECK_ONLY" -eq 0 ] && [ -x /usr/local/bin/clash-node-pin ]; then
+  /usr/local/bin/clash-node-pin enforce || true
+fi
+
+node=$(cur_ai_node)
+g_res=$(probe_g)
+c_res=$(probe_c)
+egress_ip=$(probe_ip)
+g_ok=0; c_ok=0
+ok_probe "$g_res" 204 && g_ok=1
+ok_probe "$c_res" 451 && c_ok=1
+
+# 5. 若启动期当前 AI 节点被风控或超时（且本地宽带正常），立即切到可用白名单节点并清掉脏连接
+if [ "$CHECK_ONLY" -eq 0 ] && [ -n "$node" ] && { [ "$g_ok" -eq 0 ] || [ "$c_ok" -eq 0 ]; }; then
+  cn_code=$(probe_cn)
+  if [ "$cn_code" = "200" ]; then
+    switched=0
+    for cand in "${CANDS[@]}"; do
+      [ "$cand" = "$node" ] && continue
+      set_ai_node "$cand"; sleep 2
+      cg=$(probe_g); cc=$(probe_c)
+      if ok_probe "$cg" 204 && ok_probe "$cc" 451; then
+        [ -x /usr/local/bin/clash-node-pin ] && /usr/local/bin/clash-node-pin set "$cand" >/dev/null 2>&1 || true
+        close_ai_stale_conns "$cand"
+        node="$cand"; g_res="$cg"; c_res="$cc"; egress_ip=$(probe_ip)
+        g_ok=1; c_ok=1; switched=1
+        notes+=("开机节点异常已自动切换至 $cand")
+        break
+      fi
+    done
+    if [ "$switched" -eq 0 ]; then
+      set_ai_node "$node"
+      degraded=1
+      notes+=("AI出口探活失败(g=$g_res,c=$c_res)")
+    fi
+  else
+    degraded=1
+    notes+=("本地网络未通(baidu=$cn_code)")
+  fi
+elif [ "$g_ok" -eq 0 ] || [ "$c_ok" -eq 0 ]; then
+  degraded=1
+  notes+=("AI出口探活异常(g=$g_res,c=$c_res)")
+fi
+
+ts_ok="down"
+tailscale ip -4 >/dev/null 2>&1 && ts_ok="up"
+tun_ok="off"
+ip link show Meta >/dev/null 2>&1 && tun_ok="up"
+
+summary="节点=${node:-unknown} | IP=${egress_ip:-unknown} | Google=${g_res} | GPT=${c_res} | TUN=${tun_ok} | TS=${ts_ok}"
+[ "${#notes[@]}" -gt 0 ] && summary="$summary | 备注: ${notes[*]}"
+log "check=$CHECK_ONLY degraded=$degraded $summary"
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  echo "$summary"
+  exit "$degraded"
+fi
+
+# 6. 开机后推送到 ntfy（最多等 ntfy 10 秒）
+if wait_for "ntfy" 10 bash -c "ss -tln | grep -q ':2586 '" >/dev/null 2>&1; then
+  title="X230 重启网络就绪"
+  tags="white_check_mark"
+  prio="default"
+  if [ "$degraded" -ne 0 ]; then
+    title="⚠️ X230 重启网络降级"
+    tags="warning"
+    prio="high"
+  fi
+  curl -s -H "Title: $title" -H "Tags: $tags" -H "Priority: $prio" -d "$summary" "$NTFY_URL" >/dev/null || true
+fi
+
+# 软退出 0，避免外网短暂波动卡死 sshd / 本地运维登录
+exit 0

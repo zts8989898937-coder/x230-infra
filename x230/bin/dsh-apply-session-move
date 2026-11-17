@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# 把已挂到「对话」工作区的会话真正搬进 对话 目录名 + 改写 header cwd，然后重启并自检；失败自动回滚。
+set -u
+SESS=/home/zts/.dsh/sessions
+STORE=/home/zts/.dsh/storages/workspace.json
+BAK=/home/zts/.dsh/_retired
+LOG=/home/zts/.local/state/dsh-session-move.log
+TS=$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BAK" "$(dirname "$LOG")"
+log(){ echo "[$(date '+%F %T')] $*" >>"$LOG"; }
+log "=== 会话搬迁开始 ($TS) ==="
+TAR="$BAK/sessions-before-move-$TS.tar"
+tar -cf "$TAR" -C /home/zts/.dsh sessions 2>/dev/null && log "已备份 $TAR ($(du -h "$TAR" | cut -f1))"
+cp -a "$STORE" "$STORE.bak-move-$TS" && log "已备份 workspace.json"
+systemctl stop dsh-web && log "dsh-web 已停"
+
+python3 - "$SESS" "$STORE" <<'PY' >>"$LOG" 2>&1
+import json,os,sys,subprocess,glob
+sess, store = sys.argv[1], sys.argv[2]
+TARGET='/home/zts/agent-share/对话'
+NEWDIR=os.path.join(sess,'--home-zts-agent-share-~5BF9~8BDD--')
+os.makedirs(NEWDIR,exist_ok=True)
+ws=json.load(open(store))
+ids=set()
+for w in ws['tables']['workspaces'].values(): ids |= set(w.get('sessionIds') or [])
+ids -= set(ws['global'].get('archivedSessionIds') or [])
+def rewrite(path):
+    raw=subprocess.run(['zstdcat',path],capture_output=True,check=True).stdout
+    lines=raw.split(b'\n'); changed=False
+    for i,l in enumerate(lines[:3]):
+        if not l.strip(): continue
+        try: o=json.loads(l)
+        except Exception: continue
+        if o.get('type')=='session':
+            if o.get('cwd')!=TARGET:
+                o['cwd']=TARGET; lines[i]=json.dumps(o,ensure_ascii=False).encode(); changed=True
+            break
+    if changed:
+        tmp=path+'.new'
+        open(tmp,'wb').write(b'\n'.join(lines))
+        subprocess.run(['zstd','-q','-f','--rm',tmp,'-o',path+'.zst'],check=True)
+        os.replace(path+'.zst',path)
+    return changed
+moved=0; skipped=0; missing=0
+for sid in sorted(ids):
+    srcs=glob.glob(os.path.join(sess,'*',sid))
+    if not srcs: missing+=1; continue
+    src=srcs[0]
+    f=os.path.join(src,'session.v4.jsonl.zstd')
+    if os.path.exists(f):
+        try: rewrite(f)
+        except Exception as e:
+            print('rewrite fail',sid,e); skipped+=1; continue
+    dst=os.path.join(NEWDIR,sid)
+    if os.path.abspath(src)!=os.path.abspath(dst):
+        if os.path.exists(dst):
+            skipped+=1; continue
+        os.rename(src,dst); moved+=1
+    else: skipped+=1
+print(f'搬迁完成: moved={moved} skipped={skipped} missing={missing} / 目标 {len(ids)}')
+# 清理空目录
+for d in glob.glob(os.path.join(sess,'*')):
+    if os.path.isdir(d) and not os.listdir(d):
+        os.rmdir(d); print('移除空目录',os.path.basename(d))
+PY
+
+systemctl start dsh-web && log "dsh-web 已启动"
+for i in $(seq 1 20); do
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  [ "$code" = "401" ] && { log "健康检查通过 (401, 第 ${i} 次)"; log "=== 完成 ==="; exit 0; }
+  sleep 2
+done
+log "健康检查失败，回滚"
+rm -rf "$SESS" && tar -xf "$TAR" -C /home/zts/.dsh && cp -a "$STORE.bak-move-$TS" "$STORE"
+systemctl restart dsh-web
+log "=== 已回滚 ==="
+exit 1

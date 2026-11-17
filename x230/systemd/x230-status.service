@@ -1,0 +1,18 @@
+[Unit]
+Description=X230 realtime status dashboard (port 3081)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zts
+ExecStart=/usr/bin/node /usr/local/bin/x230-status.cjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

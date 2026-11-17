@@ -1,0 +1,6 @@
+[Unit]
+Description=Sync 刷题 workspace from HK to X230 (backup)
+[Service]
+Type=oneshot
+User=zts
+ExecStart=/usr/local/bin/shiti-sync

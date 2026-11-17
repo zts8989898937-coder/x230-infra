@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# browse-smoke — Chromium 升级后的冒烟自检
+# 检查：能否启动 / 能否截图 / 尺寸是否正确 / JS 是否执行 / 版本是否变化
+# 失败时通过本机 ntfy 推送到手机；成功只写状态与日志。
+set -uo pipefail
+
+CHROME=/usr/bin/chromium
+BROWSE=/usr/local/bin/browse
+STATE="${HOME}/.local/state/browse-smoke"
+TOPIC="x230-<REDACTED_TOPIC>"
+NTFY="http://127.0.0.1:2586/${TOPIC}"
+mkdir -p "$STATE"
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+
+log() { echo "[$(date '+%F %T')] $*"; logger -t browse-smoke "$*" 2>/dev/null; }
+notify() {
+  log "FAIL: $1"
+  curl -s -m 5 -H "Title: Chromium 冒烟失败" -H "Priority: high" \
+       -d "$1
+
+主机: $(uname -n)  版本: ${ver:-?}
+修复: sudo pacman -S chromium 或看 journalctl -t browse-smoke" \
+       "$NTFY" >/dev/null 2>&1 || true
+  echo "fail $(date +%s) ${ver:-?} $1" >> "$STATE/history.log"
+  exit 1
+}
+
+ver=$("$CHROME" --version 2>/dev/null | awk '{print $2}')
+[ -n "$ver" ] || notify "无法执行 chromium --version"
+
+log "start, chromium=$ver"
+
+cat > "$TMP/probe.html" <<'HTML'
+<!doctype html><meta charset="utf-8">
+<style>html,body{margin:0;background:#123456}div{width:400px;height:300px;background:#ff8800}</style>
+<div id="b"></div>
+<script>document.getElementById("b").textContent="js-ok-"+(6*7);</script>
+HTML
+
+# 1) 截图能力 + 尺寸
+"$BROWSE" -q -o "$TMP/probe.png" -W 800 -H 600 -w 1500 "file://$TMP/probe.html" >/dev/null 2>"$TMP/err1" \
+  || notify "截图失败: $(tail -2 "$TMP/err1" | tr '\n' ' ')"
+read -r PW PH < <(python3 - "$TMP/probe.png" <<'PY'
+import struct,sys
+d=open(sys.argv[1],'rb').read(33)
+print(*struct.unpack('>II', d[16:24]))
+PY
+)
+[ "$PW" = 800 ] && [ "$PH" = 600 ] || notify "尺寸异常: ${PW}x${PH}（期望 800x600）"
+
+# 2) JS 执行能力
+DOM=$("$BROWSE" -t -w 1500 "file://$TMP/probe.html" 2>/dev/null)
+echo "$DOM" | grep -q 'js-ok-42' || notify "JS 未执行（渲染管线异常）"
+
+# 3) 真实站点连通（不阻塞判定，仅记录）
+NET=$(curl -s -o /dev/null -m 8 -w '%{http_code}' https://stillfloating.top/ || echo 000)
+
+prev=""; [ -f "$STATE/version" ] && prev=$(cat "$STATE/version")
+echo "$ver" > "$STATE/version"
+echo "ok $(date +%s) $ver http=$NET" >> "$STATE/history.log"
+if [ -n "$prev" ] && [ "$prev" != "$ver" ]; then
+  log "版本变化 $prev -> $ver，冒烟通过"
+fi
+log "OK chromium=$ver png=${PW}x${PH} net=$NET"
+exit 0

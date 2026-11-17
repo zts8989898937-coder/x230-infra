@@ -1,0 +1,10 @@
+[Unit]
+Description=Run X230 encrypted core backup to Google Drive every 3 days at 04:30
+
+[Timer]
+OnCalendar=*-*-1,4,7,10,13,16,19,22,25,28 04:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

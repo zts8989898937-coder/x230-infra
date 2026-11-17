@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# dsh-skill-explorer-lan-trust-activate — 一次性激活：补丁 → 重启 dsh-web → 校验。
+# 由 systemd-run 以 detached 方式调度（重启会杀掉发起会话，属预期）。
+# 日志：~/.local/state/dsh-skill-explorer-patch/activate.log
+set -u
+LOG="/home/zts/.local/state/dsh-skill-explorer-patch/activate.log"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null
+echo "[$(date '+%F %T')] activate start" >>"$LOG"
+
+/usr/local/bin/dsh-skill-explorer-lan-trust-patch >>"$LOG" 2>&1
+
+systemctl restart dsh-web >>"$LOG" 2>&1
+health=000
+for _ in $(seq 1 90); do
+  health=$(curl -s -o /dev/null -m 2 -w '%{http_code}' "http://100.110.77.111:3080/" 2>/dev/null)
+  case "$health" in 401|200|302|303) break ;; esac
+  sleep 1
+done
+sleep 3
+
+/usr/local/bin/dsh-skill-explorer-lan-trust-verify >>"$LOG" 2>&1
+status=$?
+echo "[$(date '+%F %T')] activate done health=$health verify_exit=$status" >>"$LOG"
+exit "$status"
