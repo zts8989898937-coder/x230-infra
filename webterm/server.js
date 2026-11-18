@@ -10,7 +10,7 @@ const readCodexHistory = require('./codex-history').createCodexHistoryReader();
 
 const PORT = 3902;
 const TTY_HOST = '127.0.0.1', TTY_PORT = 3901;
-const USER = 'zts', PASS = process.env.WEBTERM_PASS || '<REDACTED_SEE_SECRETS>';
+const { user: USER, password: PASS, host: HOST } = require('./runtime-config').loadConfig();
 const AUTH = 'Basic ' + Buffer.from(USER + ':' + PASS).toString('base64');
 const AUTH_BUF = Buffer.from(AUTH);
 const ROOT = '/home/zts/agent-share/webterm';
@@ -980,4 +980,4 @@ server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => up.destroy());
 });
 
-server.listen(PORT, '0.0.0.0', () => console.log('webterm listening on ' + PORT));
+server.listen(PORT, HOST, () => console.log('webterm listening on ' + PORT));

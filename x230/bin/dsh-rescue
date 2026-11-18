@@ -10,10 +10,10 @@
 #   dsh-rescue --with-token      # 推送里附带新 token（注意：token 能直接登录 WebUI）
 set -u
 
-URL="http://100.110.77.111:3080"
-LAN_URL="http://192.168.8.120:3081"
+URL="http://192.0.2.20:3080"
+LAN_URL="http://192.0.2.30:3081"
 NTFY="http://127.0.0.1:2586/x230-<REDACTED_TOPIC>"
-SSH_HOST="zts@100.110.77.111"
+SSH_HOST="zts@192.0.2.20"
 PHP_LOG=/home/zts/.local/state/dsh-rescue.log
 mkdir -p "$(dirname "$PHP_LOG")" 2>/dev/null
 

@@ -103,21 +103,20 @@ if (!$preview && !sf_ws_authorized()) {
 }
 
 
-$codeUrl = (string) ($secret['code_url'] ?? 'https://dsh.stillfloating.top/code/');
-$lan = 'http://192.168.8.120';
+$codeUrl = (string) ($secret['code_url'] ?? 'https://agent.example.com/code/');
+$lan = 'http://192.0.2.30';
 
 // 增删就改这里：一间舱 = 一组，一行 = 一个入口。id 要和 bay.svg 里的 data-zone 对上。
 $groups = [
     [
         'id' => 'core', 'num' => '01', 'cn' => '屏幕', 'en' => 'CORE',
         'items' => [
-            ['label' => 'DSH / 会话工作台', 'sub' => 'DEEPSEEK HARNESS', 'href' => 'https://dsh.stillfloating.top/', 'tag' => 'MAIN'],
+            ['label' => 'DSH / 会话工作台', 'sub' => 'DEEPSEEK HARNESS', 'href' => 'https://agent.example.com/', 'tag' => 'MAIN'],
             ['label' => 'VS Code / 远程编辑器', 'sub' => 'CODE SERVE-WEB', 'href' => $codeUrl, 'tag' => 'IDE'],
-            ['label' => 'X230 终端 / 公网', 'sub' => 'term · 折叠对话', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'term'), 'tag' => 'PUBLIC'],
-            ['label' => 'X230 终端 / 局域网', 'sub' => '192.168.8.120:3902 · webterm', 'href' => 'http://192.168.8.120:3902/', 'tag' => 'LAN'],
-            ['label' => 'Gitea / 代码', 'sub' => 'git', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'git'), 'tag' => 'PUBLIC'],
+            ['label' => 'X230 终端 / 局域网', 'sub' => '192.0.2.30:3902 · webterm', 'href' => 'http://192.0.2.30:3902/', 'tag' => 'LAN'],
+            ['label' => 'Gitea / 代码', 'sub' => 'git', 'href' => sprintf('https://%s.demo.example.com/', 'git'), 'tag' => 'PUBLIC'],
             ['label' => 'GitHub / 代码', 'sub' => 'zts8989898937-coder', 'href' => 'https://github.com/zts8989898937-coder?tab=repositories', 'tag' => 'CLOUD'],
-            ['label' => 'JupyterLab / 计算', 'sub' => 'jupyter', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'jupyter'), 'tag' => 'GATE'],
+            ['label' => 'JupyterLab / 计算', 'sub' => 'jupyter', 'href' => sprintf('https://%s.demo.example.com/', 'jupyter'), 'tag' => 'GATE'],
             ['label' => 'BLOG / 专属写作台', 'sub' => 'MUSIC & ALGO WRITER', 'href' => '/workspace/write/', 'tag' => 'MAIN'],
             ['label' => 'BLOG / 后台', 'sub' => 'WORDPRESS', 'href' => 'https://stillfloating.top/wp-admin/', 'tag' => 'PUBLIC'],
         ],
@@ -125,32 +124,32 @@ $groups = [
     [
         'id' => 'file', 'num' => '02', 'cn' => '硬盘', 'en' => 'FILE',
         'items' => [
-            ['label' => 'File Browser / 文件', 'sub' => 'files', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'files'), 'tag' => 'PUBLIC'],
-            ['label' => 'Alist / 网盘', 'sub' => 'alist', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'alist'), 'tag' => 'PUBLIC'],
-            ['label' => 'Stirling PDF / 文档', 'sub' => 'pdf', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'pdf'), 'tag' => 'GATE'],
-            ['label' => 'Google Drive / 云盘', 'sub' => '5 TB', 'href' => 'https://drive.google.com/drive/folders/1aJuS57ZQiVlLHx6USuJG6Z2w6Qipspek', 'tag' => 'CLOUD'],
+            ['label' => 'File Browser / 文件', 'sub' => 'files', 'href' => sprintf('https://%s.demo.example.com/', 'files'), 'tag' => 'PUBLIC'],
+            ['label' => 'Alist / 网盘', 'sub' => 'alist', 'href' => sprintf('https://%s.demo.example.com/', 'alist'), 'tag' => 'PUBLIC'],
+            ['label' => 'Stirling PDF / 文档', 'sub' => 'pdf', 'href' => sprintf('https://%s.demo.example.com/', 'pdf'), 'tag' => 'GATE'],
+            ['label' => 'Google Drive / 云盘', 'sub' => '5 TB', 'href' => 'https://drive.google.com/drive/my-drive', 'tag' => 'CLOUD'],
         ],
     ],
     [
         'id' => 'note', 'num' => '03', 'cn' => '键盘', 'en' => 'NOTE',
         'items' => [
-            ['label' => 'Memos / 备忘', 'sub' => 'memos', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'memos'), 'tag' => 'PUBLIC'],
-            ['label' => 'Excalidraw / 白板', 'sub' => 'board', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'board'), 'tag' => 'GATE'],
-            ['label' => 'draw.io / 图表', 'sub' => 'draw', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'draw'), 'tag' => 'GATE'],
+            ['label' => 'Memos / 备忘', 'sub' => 'memos', 'href' => sprintf('https://%s.demo.example.com/', 'memos'), 'tag' => 'PUBLIC'],
+            ['label' => 'Excalidraw / 白板', 'sub' => 'board', 'href' => sprintf('https://%s.demo.example.com/', 'board'), 'tag' => 'GATE'],
+            ['label' => 'draw.io / 图表', 'sub' => 'draw', 'href' => sprintf('https://%s.demo.example.com/', 'draw'), 'tag' => 'GATE'],
         ],
     ],
     [
         'id' => 'feed', 'num' => '04', 'cn' => '读听看', 'en' => 'FEED',
         'items' => [
-            ['label' => 'Miniflux / 订阅', 'sub' => 'rss', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'rss'), 'tag' => 'PUBLIC'],
-            ['label' => 'Navidrome / 音乐', 'sub' => 'music', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'music'), 'tag' => 'PUBLIC'],
-            ['label' => 'Jellyfin / 影音', 'sub' => 'video', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'video'), 'tag' => 'PUBLIC'],
+            ['label' => 'Miniflux / 订阅', 'sub' => 'rss', 'href' => sprintf('https://%s.demo.example.com/', 'rss'), 'tag' => 'PUBLIC'],
+            ['label' => 'Navidrome / 音乐', 'sub' => 'music', 'href' => sprintf('https://%s.demo.example.com/', 'music'), 'tag' => 'PUBLIC'],
+            ['label' => 'Jellyfin / 影音', 'sub' => 'video', 'href' => sprintf('https://%s.demo.example.com/', 'video'), 'tag' => 'PUBLIC'],
         ],
     ],
     [
         'id' => 'watch', 'num' => '05', 'cn' => '风扇', 'en' => 'WATCH',
         'items' => [
-            ['label' => 'Uptime Kuma / 监控', 'sub' => 'kuma', 'href' => sprintf('https://%s.156-239-8-225.sslip.io/', 'kuma'), 'tag' => 'PUBLIC'],
+            ['label' => 'Uptime Kuma / 监控', 'sub' => 'kuma', 'href' => sprintf('https://%s.demo.example.com/', 'kuma'), 'tag' => 'PUBLIC'],
             ['label' => 'X230 状态 / 看板', 'sub' => ':3081', 'href' => $lan . ':3081/', 'tag' => 'LAN'],
             ['label' => 'Netdata / 指标', 'sub' => ':19999', 'href' => $lan . ':19999/', 'tag' => 'LAN'],
         ],
@@ -158,8 +157,8 @@ $groups = [
     [
         'id' => 'home', 'num' => '00', 'cn' => '老家', 'en' => 'REMOTE',
         'items' => [
-            ['label' => '香港服务器', 'sub' => '156.239.8.225', 'href' => 'https://stillfloating.top/', 'tag' => 'PUBLIC'],
-            ['label' => '备份 / 快照', 'sub' => '05-备份归档', 'href' => 'https://drive.google.com/drive/folders/1aJuS57ZQiVlLHx6USuJG6Z2w6Qipspek', 'tag' => 'CLOUD'],
+            ['label' => '香港服务器', 'sub' => '192.0.2.10', 'href' => 'https://stillfloating.top/', 'tag' => 'PUBLIC'],
+            ['label' => '备份 / 快照', 'sub' => '05-备份归档', 'href' => 'https://drive.google.com/drive/my-drive', 'tag' => 'CLOUD'],
         ],
     ],
 ];

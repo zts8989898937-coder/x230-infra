@@ -42,7 +42,7 @@ if (function_exists('curl_init')) {
 }
 
 header('X-Quota-Source: cache');
-$file = '/www/wwwroot/156.239.8.225/wp-content/sf-private/quota.json';
+$file = '/www/wwwroot/192.0.2.10/wp-content/sf-private/quota.json';
 if (!is_readable($file)) {
     http_response_code(503);
     echo json_encode(['error' => 'quota_unavailable'], JSON_UNESCAPED_UNICODE);

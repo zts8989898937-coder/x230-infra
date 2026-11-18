@@ -5,7 +5,7 @@
 带降级的 __dshSafeUUID()。
 
 原因：crypto.randomUUID 只在安全上下文（https / localhost）可用；从局域网
-http://192.168.8.120:3082 访问时它是 undefined，点「侧边对话」会在
+http://192.0.2.30:3082 访问时它是 undefined，点「侧边对话」会在
 createTab 抛 TypeError，右侧 pane 崩溃成空白。
 
 幂等：可反复运行，npm 升级覆盖后重跑即可。

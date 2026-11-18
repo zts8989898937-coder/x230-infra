@@ -1,8 +1,0 @@
-[Unit]
-Description=DSH critical-config snapshot
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/dsh-snapshot.sh
-Nice=10

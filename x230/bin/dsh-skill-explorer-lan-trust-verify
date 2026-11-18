@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # dsh-skill-explorer-lan-trust-verify — 证明技能中心在「局域网 Authority」下真的通了，
 # 而不只是回环。做法与浏览器一致：从 journal 取 launch token → 换 dsh-auth cookie →
-# 带 Host: 192.168.8.120:3082 调 /api/dsh-skill-explorer/list。
+# 带 Host: 192.0.2.30:3082 调 /api/dsh-skill-explorer/list。
 # 结果追加到 ~/.local/state/dsh-skill-explorer-patch/verify.log；200 才算通过。
 set -u
-URL="http://100.110.77.111:3080"
-HOSTHDR="192.168.8.120:3082"
+URL="http://192.0.2.20:3080"
+HOSTHDR="192.0.2.30:3082"
 STATE_DIR="/home/zts/.local/state/dsh-skill-explorer-patch"
 LOG="$STATE_DIR/verify.log"
 mkdir -p "$STATE_DIR" 2>/dev/null

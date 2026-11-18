@@ -16,7 +16,7 @@ systemctl stop dsh-web && log "dsh-web 已停"
 cp "$NEW" "$STORE" && log "已写入合并版 workspace.json"
 systemctl start dsh-web && log "dsh-web 已启动"
 for i in $(seq 1 20); do
-  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://192.0.2.20:3080/ 2>/dev/null)
   [ "$code" = "401" ] && { log "健康检查通过 (401, 第 ${i} 次)"; log "=== 完成 ==="; exit 0; }
   sleep 2
 done

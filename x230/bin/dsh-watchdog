@@ -13,7 +13,7 @@ set -u
 SIM="${WD_SIM:-0}"
 LOG="${WD_LOG:-/home/zts/.local/state/dsh-watchdog.log}"
 STATE_DIR="${WD_STATE_DIR:-/home/zts/.local/state}"
-URL="${WD_URL:-http://100.110.77.111:3080}"
+URL="${WD_URL:-http://192.0.2.20:3080}"
 PATCH="${WD_PATCH:-/home/zts/.dsh/profiles/web/cordis.patch.yml}"
 BACKUP_ROOT="${WD_BACKUP_ROOT:-/home/zts/agent-share/工作产出/05-备份归档}"
 ROLL_STATE="${WD_ROLL_STATE:-/var/lib/dsh-roll}"

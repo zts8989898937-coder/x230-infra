@@ -6,10 +6,10 @@ export HOME=/root
 export XDG_CACHE_HOME=/root/.cache
 mkdir -p "$XDG_CACHE_HOME"
 
-export RESTIC_REPOSITORY="sftp:root@156.239.8.225:/srv/restic/x230"
+export RESTIC_REPOSITORY="sftp:root@192.0.2.10:/srv/restic/x230"
 export RESTIC_PASSWORD_FILE="/home/zts/.config/restic/password"
-SFTP_CMD='ssh -i /home/zts/.ssh/id_ed25519_hk -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 root@156.239.8.225 -s sftp'
-SSH_HK='ssh -i /home/zts/.ssh/id_ed25519_hk -o IdentitiesOnly=yes -o ConnectTimeout=10 root@156.239.8.225'
+SFTP_CMD='ssh -i /home/zts/.ssh/id_ed25519_hk -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 root@192.0.2.10 -s sftp'
+SSH_HK='ssh -i /home/zts/.ssh/id_ed25519_hk -o IdentitiesOnly=yes -o ConnectTimeout=10 root@192.0.2.10'
 NTFY_URL="http://127.0.0.1:2586/x230-<REDACTED_TOPIC>"
 
 notify_fail() {
@@ -18,7 +18,7 @@ notify_fail() {
 
 # 1. 导出最新包清单与系统状态
 /usr/local/bin/x230-backup-state /home/zts/backups/system-state >/dev/null || true
-$SSH_HK "mkdir -p /srv/backups/x230-pkglists" 2>/dev/null && scp -q -i /home/zts/.ssh/id_ed25519_hk -o IdentitiesOnly=yes /home/zts/backups/system-state/* root@156.239.8.225:/srv/backups/x230-pkglists/ 2>/dev/null || true
+$SSH_HK "mkdir -p /srv/backups/x230-pkglists" 2>/dev/null && scp -q -i /home/zts/.ssh/id_ed25519_hk -o IdentitiesOnly=yes /home/zts/backups/system-state/* root@192.0.2.10:/srv/backups/x230-pkglists/ 2>/dev/null || true
 
 # 2. 检查香港服务器剩余空间（低于 600MB 拒绝继续塞入，先尝试 prune 释放）
 hk_avail_kb=$($SSH_HK "df -Pk /srv | awk 'NR==2{print \$4}'" 2>/dev/null || echo "")

@@ -9,7 +9,7 @@ const assert=require('node:assert/strict');
   class ES{constructor(){this.readyState=1}addEventListener(){}close(){}}window.EventSource=ES;
  });
  const [,username,password]=fs.readFileSync(__dirname+'/server.js','utf8').match(/const USER = '([^']+)', PASS = '([^']+)'/);
- const live=await context.request.get('http://192.168.8.120:3902/?v=20261116.3',{headers:{Authorization:'Basic '+Buffer.from(username+':'+password).toString('base64')}});
+ const live=await context.request.get('http://192.0.2.30:3902/?v=20261116.3',{headers:{Authorization:'Basic '+Buffer.from(username+':'+password).toString('base64')}});
  assert.equal(live.status(),200);const servedHtml=await live.text();assert.ok(servedHtml.includes('function swapPanePositions'));
  console.log('PASS LAN server serves the updated interface');
  const shotDir='/home/zts/agent-share/工作产出/06-临时中转/2026-11-16/webterm-check';fs.mkdirSync(shotDir,{recursive:true});

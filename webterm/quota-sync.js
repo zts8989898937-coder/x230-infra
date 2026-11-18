@@ -4,7 +4,7 @@
 const { execFileSync } = require('child_process');
 const { getQuota } = require('./quota');
 
-const REMOTE_PATH = '/www/wwwroot/156.239.8.225/wp-content/sf-private/quota.json';
+const REMOTE_PATH = '/www/wwwroot/192.0.2.10/wp-content/sf-private/quota.json';
 
 async function main() {
   const data = await getQuota({ force: true, waitCli: true });

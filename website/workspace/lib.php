@@ -7,7 +7,7 @@ const SF_WS_COOKIE = 'sf_ws';
 const SF_WS_TTL = 5184000; // 60 天，够整个学期不用重进
 // 站点开了 open_basedir，密钥必须留在站点根内；用 .php 存数组，
 // 直接访问只会被 PHP 执行（无输出），不会像 .json 那样被当静态文件读走。
-const SF_WS_SECRET = '/www/wwwroot/156.239.8.225/wp-content/sf-private/workspace-secret.php';
+const SF_WS_SECRET = '/www/wwwroot/192.0.2.10/wp-content/sf-private/workspace-secret.php';
 
 function sf_ws_secret(): array
 {

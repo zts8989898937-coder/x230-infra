@@ -9,7 +9,7 @@
 #   - 审查由包装脚本 dsh-nightly-roll 在核心退出后调用 dsh-roll-ai-review 完成。
 set -uo pipefail
 
-URL="${DSH_ROLL_URL:-http://100.110.77.111:3080}"
+URL="${DSH_ROLL_URL:-http://192.0.2.20:3080}"
 STATE_DIR="${DSH_ROLL_STATE_DIR:-/var/lib/dsh-roll}"
 LOG="${DSH_ROLL_LOG:-/var/log/dsh-nightly-roll.log}"
 PROFILE="/home/zts/.dsh/profiles/web"

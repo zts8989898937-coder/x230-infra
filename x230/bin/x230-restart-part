@@ -33,8 +33,8 @@ case "$PART" in
   dsh)
     echo "=== [重启策略: dsh] 必须走 dsh-restart-safe（脱离会话 + 重打 50~56 号补丁） ==="
     if [ "$CHECK" -eq 1 ]; then
-      curl -s -o /dev/null -m 4 -w "dsh-web(100.110.77.111:3080) http=%{http_code}\n" http://100.110.77.111:3080/
-      curl -s -o /dev/null -m 4 -w "dsh-lan(192.168.8.120:3082) http=%{http_code}\n" http://192.168.8.120:3082/
+      curl -s -o /dev/null -m 4 -w "dsh-web(192.0.2.20:3080) http=%{http_code}\n" http://192.0.2.20:3080/
+      curl -s -o /dev/null -m 4 -w "dsh-lan(192.0.2.30:3082) http=%{http_code}\n" http://192.0.2.30:3082/
       exit 0
     fi
     exec /usr/local/bin/dsh-restart-safe

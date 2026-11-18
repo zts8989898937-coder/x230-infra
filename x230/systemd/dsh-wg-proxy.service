@@ -1,9 +1,0 @@
-[Unit]
-Description=WireGuard proxy for dsh-web
-Requires=dsh-wg-proxy.socket
-After=dsh-wg-proxy.socket dsh-web.service wg-quick@wg0.service
-
-[Service]
-ExecStart=/usr/lib/systemd/systemd-socket-proxyd 100.110.77.111:3080
-Restart=on-failure
-RestartSec=5

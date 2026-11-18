@@ -15,7 +15,7 @@ if (!sf_ws_authorized()) {
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
-$secretFile = '/www/wwwroot/156.239.8.225/wp-content/sf-private/writer-secret.php';
+$secretFile = '/www/wwwroot/192.0.2.10/wp-content/sf-private/writer-secret.php';
 $cfg = is_file($secretFile) ? include $secretFile : [];
 $cfg = is_array($cfg) ? $cfg : [];
 $base = rtrim((string) ($cfg['daemon_url'] ?? 'http://127.0.0.1:18015'), '/');

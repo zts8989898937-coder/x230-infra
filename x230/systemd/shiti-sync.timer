@@ -1,7 +1,0 @@
-[Unit]
-Description=Sync 刷题 workspace every 15 min
-[Timer]
-OnBootSec=3min
-OnUnitInactiveSec=15min
-[Install]
-WantedBy=timers.target

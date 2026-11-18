@@ -37,11 +37,11 @@ PROFILE = f"{HOME}/.dsh/profiles/web"
 PATCH = f"{PROFILE}/cordis.patch.yml"
 REPORT_ROOT = f"{HOME}/agent-share/工作产出/01-文档报告/夜间滚包审查"
 CONF = "/etc/dsh-roll-ai-review.conf"
-DSH_URL = "http://100.110.77.111:3080"
+DSH_URL = "http://192.0.2.20:3080"
 BACKUP_ROOT = f"{HOME}/agent-share/工作产出/05-备份归档"
 CAND = f"{STATE_DIR}/candidate-cordis.patch.yml"
 GOOD = f"{STATE_DIR}/last-good-cordis.patch.yml"
-PUBLIC_URL = "https://dsh.stillfloating.top/"
+PUBLIC_URL = "https://agent.example.com/"
 PROXY = "http://127.0.0.1:7897"
 
 DEFAULTS = {

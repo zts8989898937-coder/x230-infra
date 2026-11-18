@@ -443,7 +443,7 @@ def main() -> int:
 
     # Nodejs 更新后检查 dsh-web 存活
     if any(l.startswith("nodejs ") for l in upg_lines):
-        _, hc = run("curl -s -o /dev/null -m 4 -w '%{http_code}' http://100.110.77.111:3080/", timeout=10)
+        _, hc = run("curl -s -o /dev/null -m 4 -w '%{http_code}' http://192.0.2.20:3080/", timeout=10)
         if hc.strip() not in ("200", "302", "401"):
             log(f"dsh-web 健康异常(http={hc})，调用 dsh-restart-safe 自救...")
             run("/usr/local/bin/dsh-restart-safe", timeout=30)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # clash-node-pin — 把 Clash 的「🔰节点选择」固定在指定节点（默认 日本1-VIP88）
 #
-# 为什么：Antigravity(agy) 只有在日本1（133.18.114.45）出口才能用；
-#   日本2（133.18.114.145）会报 FAILED_PRECONDITION 400 User location is not supported。
+# 为什么：Antigravity(agy) 只有在日本1（198.51.100.11）出口才能用；
+#   日本2（198.51.100.10）会报 FAILED_PRECONDITION 400 User location is not supported。
 #
 # 用法:
 #   clash-node-pin status      # 看当前组选中节点 / 固定目标 / 开关状态

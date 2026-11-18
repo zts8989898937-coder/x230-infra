@@ -102,7 +102,7 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
   [ -x /usr/local/bin/hk-direct-route.sh ] && /usr/local/bin/hk-direct-route.sh up || true
   [ -x /usr/local/bin/ts-mark-fix.sh ] && /usr/local/bin/ts-mark-fix.sh || true
 fi
-ip rule list | grep -q '156.239.8.225' || { degraded=1; notes+=("缺HK直连规则"); }
+ip rule list | grep -q '192.0.2.10' || { degraded=1; notes+=("缺HK直连规则"); }
 
 # 3. Clash TUN 与控制面就绪
 if [ "$CHECK_ONLY" -eq 0 ]; then

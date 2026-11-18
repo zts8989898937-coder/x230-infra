@@ -43,7 +43,7 @@ copy "/home/zts/.dsh/feishu-im/state.json" "home/zts/.dsh/feishu-im/state.json"
 copy "/home/zts/.config/secrets" "home/zts/.config/secrets"
 
 # 香港 nginx 站点配置（尽力而为）
-if ssh -o ConnectTimeout=8 -o BatchMode=yes hk 'cat /www/server/panel/vhost/nginx/dsh.stillfloating.top.conf' > "$TMP/nginx-dsh.stillfloating.top.conf" 2>/dev/null; then :; else rm -f "$TMP/nginx-dsh.stillfloating.top.conf"; fi
+if ssh -o ConnectTimeout=8 -o BatchMode=yes hk 'cat /www/server/panel/vhost/nginx/agent.example.com.conf' > "$TMP/nginx-agent.example.com.conf" 2>/dev/null; then :; else rm -f "$TMP/nginx-agent.example.com.conf"; fi
 
 {
   echo "DSH 关键快照 $STAMP"

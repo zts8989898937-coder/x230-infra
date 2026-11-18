@@ -5,11 +5,11 @@ Why this file exists
 --------------------
 `@linxin666/dsh-client-ui-skill-explorer` fences every `/api/dsh-skill-explorer/*`
 route to loopback (socket address AND Host header AND no forwarding header).
-This host serves the GUI on http://192.168.8.120:3082 through a systemd socket
-proxy in front of the tailnet listener 100.110.77.111:3080, so a LAN browser is
+This host serves the GUI on http://192.0.2.30:3082 through a systemd socket
+proxy in front of the tailnet listener 192.0.2.20:3080, so a LAN browser is
 never on loopback and the whole skill center answers
 `403 {"error":"forbidden: loopback-only"}` even though `--trusted-host
-192.168.8.120:3082` lets every other route work.
+192.0.2.30:3082` lets every other route work.
 
 The patch adds one extra allow path that is strictly narrower than the rest of
 the GUI already is: it asks the host's own `connection` service
@@ -57,7 +57,7 @@ HELPER = """//#region src/host-trust.ts
 * the bind address) and the request must carry the dsh web browser-session
 * cookie. The socket address is deliberately not consulted, which is what a
 * socket-proxied LAN entry needs: this host serves the GUI on
-* http://192.168.8.120:3082 in front of the tailnet listener, so an admitted
+* http://192.0.2.30:3082 in front of the tailnet listener, so an admitted
 * browser is never on loopback even though --trusted-host accepts it.
 * Fail-closed: a missing service, a throwing lookup or any rejection answers
 * false, leaving the loopback fence in charge.

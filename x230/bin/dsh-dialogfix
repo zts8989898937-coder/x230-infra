@@ -17,7 +17,7 @@ cp /home/zts/.dsh/_retired/workspace.fixed-20261106.json "$STORES/workspace.json
 chown -R zts:zts "$BUCKET" && log "已修正会话目录属主"
 systemctl start dsh-web && log "dsh-web 已启动"
 for i in $(seq 1 25); do
-  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://192.0.2.20:3080/ 2>/dev/null)
   [ "$code" = "401" ] && { log "健康检查通过 (第 ${i} 次)"; break; }
   sleep 2
 done

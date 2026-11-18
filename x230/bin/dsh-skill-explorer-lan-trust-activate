@@ -12,7 +12,7 @@ echo "[$(date '+%F %T')] activate start" >>"$LOG"
 systemctl restart dsh-web >>"$LOG" 2>&1
 health=000
 for _ in $(seq 1 90); do
-  health=$(curl -s -o /dev/null -m 2 -w '%{http_code}' "http://100.110.77.111:3080/" 2>/dev/null)
+  health=$(curl -s -o /dev/null -m 2 -w '%{http_code}' "http://192.0.2.20:3080/" 2>/dev/null)
   case "$health" in 401|200|302|303) break ;; esac
   sleep 1
 done

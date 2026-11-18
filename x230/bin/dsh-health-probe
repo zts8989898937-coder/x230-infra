@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 
-HOST = "100.110.77.111"
+HOST = "192.0.2.20"
 PORT = 3080
 URL = f"http://{HOST}:{PORT}/"
 

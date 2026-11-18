@@ -12,7 +12,7 @@ set -uo pipefail
 W=/home/zts/.dsh/storages/workspace.json
 BACKUP_DIR=/home/zts/agent-share/工作产出/05-备份归档/$(date +%Y%m%d)
 LOG=/var/log/dsh-restore-sessions.log
-URL=http://100.110.77.111:3080
+URL=http://192.0.2.20:3080
 
 mkdir -p "$BACKUP_DIR"
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$LOG"; }

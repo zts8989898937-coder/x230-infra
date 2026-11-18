@@ -18,7 +18,7 @@ chown -R zts:zts "$B"
 systemctl start dsh-web && log "已启动"
 ok=0
 for i in $(seq 1 25); do
-  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://100.110.77.111:3080/ 2>/dev/null)
+  code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' http://192.0.2.20:3080/ 2>/dev/null)
   [ "$code" = "401" ] && { log "健康检查通过 (第 ${i} 次)"; ok=1; break; }
   sleep 2
 done

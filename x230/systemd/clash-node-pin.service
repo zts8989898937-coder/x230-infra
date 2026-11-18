@@ -1,8 +1,0 @@
-[Unit]
-Description=Clash 节点固定守护（把「🔰节点选择」拉回日本1，agy 依赖该出口）
-After=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/clash-node-pin enforce
-Nice=10

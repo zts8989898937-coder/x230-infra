@@ -1,0 +1,14 @@
+[Unit]
+Description=Example application
+After=network.target
+
+[Service]
+Type=simple
+User=example
+WorkingDirectory=/srv/example-app
+EnvironmentFile=/etc/example-app/app.env
+ExecStart=/usr/bin/node /srv/example-app/server.js
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
