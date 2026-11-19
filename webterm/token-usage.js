@@ -24,6 +24,16 @@ const PRICING = {
   'gpt-frontier':          { in: 2.00,  cr: 0.20,  cw: 2.00,  out: 12.00 },
   'claude-sonnet':         { in: 2.00,  cr: 0.20,  cw: 2.50,  out: 10.00 },
   'claude-opus':           { in: 4.00,  cr: 0.40,  cw: 5.00,  out: 20.00 },
+  // Gemini / Claude native reference snapshot: official Standard API prices on 2026-11-17.
+  // https://aistudio.google.com/docs/pricing
+  // https://platform.claude.com/docs/en/about-claude/pricing
+  // Argon promotional price through Nov 30; Flash through Dec 31. Snapshot, not historical billing.
+  'gemini-4-neon':         { in: 3.00, cr: 0.15, cw: 3.00, out: 15.00 },
+  'gemini-4-hydrogen':     { in: 1.50, cr: 0.075, cw: 1.50, out: 7.50 },
+  'gemini-4-argon':        { in: 2.00, cr: 0.10, cw: 2.00, out: 10.00 },
+  'gemini-3.8-flash':      { in: 0.75, cr: 0.075, cw: 0.75, out: 3.75 },
+  'claude-opus-5.5':      { in: 4.00, cr: 0.20, cw: 5.00, out: 20.00 },
+  'claude-sonnet-5.5':    { in: 2.00, cr: 0.10, cw: 2.50, out: 10.00 },
   'gemini-pro':            { in: 1.25,  cr: 0.31,  cw: 1.25,  out: 5.00 },
   'gemini-flash':          { in: 0.15,  cr: 0.0375, cw: 0.15, out: 0.60 },
   'glm-5.3':               { in: 0.80,  cr: 0.08,  cw: 0.80,  out: 3.20 },
@@ -78,6 +88,12 @@ function resolvePriceKey(providerGroup, model, band) {
   if (providerGroup === 'xpeach') return m.includes('opus') ? 'claude-opus' : 'claude-sonnet';
   if (providerGroup === 'glm') return m.includes('flash') ? 'glm-5.3-flash' : 'glm-5.3';
   if (providerGroup === 'agy') {
+    if (m.includes('gemini-4-neon') || m.includes('orchestrator-neon')) return 'gemini-4-neon';
+    if (m.includes('gemini-4-hydrogen')) return 'gemini-4-hydrogen';
+    if (m.includes('gemini-4-argon') || m.includes('gemini-pro-orchestrator')) return 'gemini-4-argon';
+    if (m.includes('gemini-3.8-flash')) return 'gemini-3.8-flash';
+    if (m.includes('claude-opus-5-5')) return 'claude-opus-5.5';
+    if (m.includes('claude-sonnet-5-5')) return 'claude-sonnet-5.5';
     if (m.includes('opus')) return 'claude-opus';
     if (m.includes('sonnet')) return 'claude-sonnet';
     if (m.includes('flash')) return 'gemini-flash';
@@ -158,13 +174,13 @@ function scanAllLogs() {
     codex: makeBucket('codex', 'Codex (OpenAI)', 'subscription', '订阅调用日志；不代表订阅费或 API 账单', '读取 ~/.codex/sessions；仅计 OpenAI GPT 系列'),
     glm: makeBucket('glm', 'GLM (Z.ai)', 'subscription', '订阅调用日志；参考价不代表实际支出', '读取 DSH zai-coding-cn 日志'),
     xpeach: makeBucket('xpeach', 'XPeach / Claude', 'payg', '中转按量直出（XPeach API 实扣为准）', '本地仅留近端会话；实扣金额同步自 XPeach 余额接口'),
-    agy: makeBucket('agy', 'Antigravity', 'subscription', 'Google AI Pro 订阅 · 原生调用日志；非额外账单', '原生 SQLite gen_metadata；原生模型金额待核价；DSH agy-bridge 同源调用不重复叠加')
+    agy: makeBucket('agy', 'Antigravity', 'subscription', 'Google AI Pro 订阅 · 原生调用日志；非额外账单', '原生 SQLite gen_metadata；原生模型按 2026-11-17 官方 Standard API 标价估算；DSH agy-bridge 同源调用不重复叠加')
   };
 
   const native = scanNativeUsage();
   const nativeSessions = new Set();
   for (const r of native.records) {
-    addTokens(buckets.agy, 'Antigravity 原生', r.model, null, r);
+    addTokens(buckets.agy, 'Antigravity 原生', r.model, resolvePriceKey('agy', r.model), r);
     nativeSessions.add(r.session);
   }
   buckets.agy.sessions = nativeSessions.size;
@@ -393,6 +409,7 @@ function finalizeUsage(buckets, providers) {
     deepseekRemainingCny: dsRemainingCny !== null ? Number(dsRemainingCny.toFixed(2)) : null,
     xpeachBilledUsd: xpeachBilledUsd !== null ? Number(xpeachBilledUsd.toFixed(2)) : null,
     nativeAntigravity: buckets.agy.nativeCoverage,
+    nativePricing: { asOf: '2026-11-17', basis: 'Standard API 参考价快照；非历史账单', source: 'https://aistudio.google.com/docs/pricing', claudeSource: 'https://platform.claude.com/docs/en/about-claude/pricing', note: '按输入/缓存命中/输出分别计价；trial、tiered、思考档位按基础型号；内部 orchestrator 别名近似按 Argon；不含工具与缓存存储费' },
     confirmedBilledUsd: xpeachBilledUsd,
     estimatedPaygUsd: Number(byProvider.filter(p => p.billingMode === 'payg' && p.paygSource !== 'api_billed').reduce((n, p) => n + p.paygSpentUsd, 0).toFixed(2)),
     byProvider,

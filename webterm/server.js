@@ -58,13 +58,61 @@ function noteAuthFail(ip) {
   authFailures.set(ip, rec);
 }
 
-const ok = req => {
+const AUTH_COOKIE_NAME = 'wt_auth';
+const AUTH_COOKIE_MAX_AGE_SEC = 30 * 24 * 3600;
+const AUTH_COOKIE_SECRET = crypto.createHash('sha256').update('wt-cookie-v1:' + AUTH).digest();
+
+function signAuthCookie(ts) {
+  const payload = String(ts);
+  const sig = crypto.createHmac('sha256', AUTH_COOKIE_SECRET).update(payload).digest('base64url');
+  return payload + '.' + sig;
+}
+
+function parseCookie(header, name) {
+  if (typeof header !== 'string' || !header) return '';
+  for (const part of header.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    if (part.slice(0, idx).trim() === name) return part.slice(idx + 1).trim();
+  }
+  return '';
+}
+
+function okBasic(req) {
   const h = req.headers.authorization;
   if (typeof h !== 'string') return false;
   const b = Buffer.from(h);
   if (b.length !== AUTH_BUF.length) return false;
   return crypto.timingSafeEqual(b, AUTH_BUF);
-};
+}
+
+function okCookie(req) {
+  const val = parseCookie(req.headers.cookie, AUTH_COOKIE_NAME);
+  if (!val) return false;
+  const dot = val.indexOf('.');
+  if (dot <= 0) return false;
+  const tsStr = val.slice(0, dot);
+  const ts = Number(tsStr);
+  if (!Number.isFinite(ts) || ts <= 0) return false;
+  const ageSec = (Date.now() - ts) / 1000;
+  if (ageSec < -300 || ageSec > AUTH_COOKIE_MAX_AGE_SEC) return false;
+  const expected = signAuthCookie(tsStr);
+  const a = Buffer.from(val);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function makeAuthCookie(req) {
+  const isHttps = String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
+  return (
+    AUTH_COOKIE_NAME + '=' + signAuthCookie(Date.now()) +
+    '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + AUTH_COOKIE_MAX_AGE_SEC +
+    (isHttps ? '; Secure' : '')
+  );
+}
+
+const ok = req => okBasic(req) || okCookie(req);
 
 const sseClients = new Set();
 let indexVer = '';
@@ -136,7 +184,7 @@ function handleEvents(req, res) {
 }
 
 const TTY_THEME_STYLE = '<style id="wt-tokyo-style">html,body,.terminal,.xterm,.xterm-viewport,.xterm-screen{background:transparent!important;background-color:transparent!important}</style>';
-const TTY_PATCH_SNIPPET = TTY_THEME_STYLE + '<script>(function(){var NativeSocket=window.WebSocket;window.WebSocket=class extends NativeSocket{constructor(...args){super(...args);window.__wtSocket=this;}};var TOKYO={background:"rgba(0,0,0,0)",foreground:"#f1ece3",cursor:"#ee9833",cursorAccent:"#0a0a0c",selectionBackground:"rgba(238,152,51,0.28)",black:"#0a0a0c",red:"#e2708f",green:"#98b88c",yellow:"#ee9833",blue:"#83b8ca",magenta:"#b8a1c9",cyan:"#cbb38f",white:"#d8d2c7",brightBlack:"#5b6064",brightRed:"#e2708f",brightGreen:"#98b88c",brightYellow:"#ee9833",brightBlue:"#83b8ca",brightMagenta:"#b8a1c9",brightCyan:"#cbb38f",brightWhite:"#f1ece3"};var o=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(t,l,p){if(t==="beforeunload")return;return o.call(this,t,l,p);};var jp=JSON.parse;JSON.parse=function(s,r){var v=jp.call(this,s,r);if(v&&typeof v==="object"&&!Array.isArray(v)&&("rendererType" in v||"disableLeaveAlert" in v)){v.rendererType="dom";v.scrollback=600;v.disableLeaveAlert=true;v.macOptionClickForcesSelection=true;v.macOptionIsMeta=true;v.allowTransparency=true;v.theme=TOKYO;}return v;};function cleanTxt(txt){return String(txt||"").replace(/[ \\t]+(?=\\r?\\n|$)/g,"");}function copyFallback(txt,silent){txt=cleanTxt(txt);if(!txt)return false;var ok=false;try{var ta=document.createElement("textarea");ta.value=txt;ta.setAttribute("readonly","");ta.style.cssText="position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";document.body.appendChild(ta);ta.focus({preventScroll:true});ta.select();ta.setSelectionRange(0,txt.length);ok=document.execCommand("copy");document.body.removeChild(ta);}catch(e){}try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).catch(function(){});}catch(e){}try{if(window.term&&window.term.focus)window.term.focus();}catch(e){}if(ok&&!silent){try{if(window.parent&&window.parent.wtNotifyCopy)window.parent.wtNotifyCopy(txt.length);}catch(e){}}return ok;}window.__wtCopyText=copyFallback;var pt=setInterval(function(){var t=window.term;if(t&&t.options){t.options.allowTransparency=true;t.options.macOptionIsMeta=true;t.options.theme=TOKYO;}var ss=t&&t._core&&t._core._selectionService;if(ss){if(!ss.__wtPatched){ss.__wtPatched=true;ss.shouldForceSelection=function(e){return !e.ctrlKey;};}clearInterval(pt);}},50);setTimeout(function(){clearInterval(pt);},15000);document.addEventListener("copy",function(e){var t=window.term;if(t&&t.hasSelection&&t.hasSelection()){var txt=cleanTxt(t.getSelection());if(txt&&e.clipboardData){e.clipboardData.setData("text/plain",txt);e.preventDefault();try{if(window.parent&&window.parent.wtNotifyCopy)window.parent.wtNotifyCopy(txt.length);}catch(err){}}}},true);window.addEventListener("mouseup",function(e){if(e.button!==0||e.ctrlKey)return;var t=window.term;if(t&&t.hasSelection&&t.hasSelection()){var txt=t.getSelection();if(txt)copyFallback(txt,false);}});window.addEventListener("keydown",function(e){var isC=(e.code==="KeyC"||(e.key&&e.key.toLowerCase()==="c"));var isCopy=((e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.shiftKey)||(e.ctrlKey&&e.shiftKey&&!e.metaKey&&!e.altKey))&&isC;if(!isCopy)return;var t=window.term;if(t&&t.hasSelection&&t.hasSelection()){var txt=t.getSelection();if(txt){copyFallback(txt,false);e.preventDefault();e.stopPropagation();}}},true);})();</script>';
+const TTY_PATCH_SNIPPET = TTY_THEME_STYLE + '<script>(function(){var NativeSocket=window.WebSocket;window.WebSocket=class extends NativeSocket{constructor(...args){super(...args);window.__wtSocket=this;window.__wtClosedAt=0;this.addEventListener("close",function(){window.__wtClosedAt=Date.now();});}};document.addEventListener("click",function(e){var el=e.target;if(el&&el.textContent&&el.textContent.indexOf("Reconnect")!==-1){location.reload();}},true);document.addEventListener("visibilitychange",function(){if(!document.hidden&&window.__wtSocket&&window.__wtSocket.readyState>=2){location.reload();}});window.addEventListener("pageshow",function(){if(window.__wtSocket&&window.__wtSocket.readyState>=2){location.reload();}});var TOKYO={background:"rgba(0,0,0,0)",foreground:"#f1ece3",cursor:"#ee9833",cursorAccent:"#0a0a0c",selectionBackground:"rgba(238,152,51,0.28)",black:"#0a0a0c",red:"#e2708f",green:"#98b88c",yellow:"#ee9833",blue:"#83b8ca",magenta:"#b8a1c9",cyan:"#cbb38f",white:"#d8d2c7",brightBlack:"#5b6064",brightRed:"#e2708f",brightGreen:"#98b88c",brightYellow:"#ee9833",brightBlue:"#83b8ca",brightMagenta:"#b8a1c9",brightCyan:"#cbb38f",brightWhite:"#f1ece3"};var o=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(t,l,p){if(t==="beforeunload")return;return o.call(this,t,l,p);};var jp=JSON.parse;JSON.parse=function(s,r){var v=jp.call(this,s,r);if(v&&typeof v==="object"&&!Array.isArray(v)&&("rendererType" in v||"disableLeaveAlert" in v)){v.rendererType="dom";v.scrollback=600;v.disableLeaveAlert=true;v.macOptionClickForcesSelection=true;v.macOptionIsMeta=true;v.allowTransparency=true;v.theme=TOKYO;}return v;};function cleanTxt(txt){return String(txt||"").replace(/[ \\t]+(?=\\r?\\n|$)/g,"");}function copyFallback(txt,silent){txt=cleanTxt(txt);if(!txt)return false;var ok=false;try{var ta=document.createElement("textarea");ta.value=txt;ta.setAttribute("readonly","");ta.style.cssText="position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";document.body.appendChild(ta);ta.focus({preventScroll:true});ta.select();ta.setSelectionRange(0,txt.length);ok=document.execCommand("copy");document.body.removeChild(ta);}catch(e){}try{if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).catch(function(){});}catch(e){}try{if(window.term&&window.term.focus)window.term.focus();}catch(e){}if(ok&&!silent){try{if(window.parent&&window.parent.wtNotifyCopy)window.parent.wtNotifyCopy(txt.length);}catch(e){}}return ok;}window.__wtCopyText=copyFallback;var pt=setInterval(function(){var t=window.term;if(t&&t.options){t.options.allowTransparency=true;t.options.macOptionIsMeta=true;t.options.theme=TOKYO;}var ss=t&&t._core&&t._core._selectionService;if(ss){if(!ss.__wtPatched){ss.__wtPatched=true;ss.shouldForceSelection=function(e){return !e.ctrlKey;};}clearInterval(pt);}},50);setTimeout(function(){clearInterval(pt);},15000);document.addEventListener("copy",function(e){var t=window.term;if(t&&t.hasSelection&&t.hasSelection()){var txt=cleanTxt(t.getSelection());if(txt&&e.clipboardData){e.clipboardData.setData("text/plain",txt);e.preventDefault();try{if(window.parent&&window.parent.wtNotifyCopy)window.parent.wtNotifyCopy(txt.length);}catch(err){}}}},true);window.addEventListener("mouseup",function(e){if(e.button!==0||e.ctrlKey)return;var t=window.term;if(t&&t.hasSelection&&t.hasSelection()){var txt=t.getSelection();if(txt)copyFallback(txt,false);}});window.addEventListener("keydown",function(e){var isC=(e.code==="KeyC"||(e.key&&e.key.toLowerCase()==="c"));var isCopy=((e.metaKey&&!e.ctrlKey&&!e.altKey&&!e.shiftKey)||(e.ctrlKey&&e.shiftKey&&!e.metaKey&&!e.altKey))&&isC;if(!isCopy)return;var t=window.term;if(t&&t.hasSelection&&t.hasSelection()){var txt=t.getSelection();if(txt){copyFallback(txt,false);e.preventDefault();e.stopPropagation();}}},true);})();</script>';
 
 function proxyHttp(req, res) {
   const headers = Object.assign({}, req.headers);
@@ -877,6 +925,9 @@ const server = http.createServer((req, res) => {
     return res.end('auth required');
   }
   authFailures.delete(ip);
+  if (okBasic(req) && !okCookie(req)) {
+    res.setHeader('Set-Cookie', makeAuthCookie(req));
+  }
   if (req.url === '/' || req.url.startsWith('/?')) return serveIndex(res);
   if (req.url === '/events' || req.url.startsWith('/events?')) return handleEvents(req, res);
   if (req.url === '/wallpapers' || req.url.startsWith('/wallpapers?')) {
@@ -960,7 +1011,15 @@ server.on('connection', sock => {
 
 server.on('upgrade', (req, socket, head) => {
   const ip = clientIp(req);
-  if (authLocked(ip) || !ok(req)) { noteAuthFail(ip); socket.destroy(); return; }
+  if (authLocked(ip)) {
+    socket.end('HTTP/1.1 429 Too Many Requests\r\nRetry-After: 900\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    return;
+  }
+  if (!ok(req)) {
+    noteAuthFail(ip);
+    socket.end('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm="X230 Terminal"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    return;
+  }
   authFailures.delete(ip);
   try { socket.setNoDelay(true); } catch (e) {}
   const up = net.connect(TTY_PORT, TTY_HOST, () => {

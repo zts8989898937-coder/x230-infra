@@ -267,6 +267,12 @@
     };
   }
 
+  // A picker left in scrollback is no longer active once dialogue resumes.
+  // Keep status lines after the footer; only a new input prompt ends the picker.
+  function hasDialogueAfterMenu(lines, footerIndex) {
+    return lines.slice(footerIndex + 1).some(line => /^\s*[›❯>](?:\s|$)/.test(line));
+  }
+
   function parseTerminalHistory(rawText, cmd = '', meta = {}) {
     const normalized = String(rawText || '').replace(/\r\n?/g, '\n');
     let splitRaw = normalized.split('\n');
@@ -285,7 +291,8 @@
       }
       if (!inFence && NATIVE_MENU_HEADING_RE.test(t)) menuStart = i;
     }
-    if (menuStart >= 0 && splitPlain.slice(menuStart).some(l => NATIVE_MENU_FOOTER_RE.test(l))) {
+    const menuFooter = menuStart < 0 ? -1 : splitPlain.findIndex((l, i) => i > menuStart && NATIVE_MENU_FOOTER_RE.test(l));
+    if (menuFooter >= 0 && !hasDialogueAfterMenu(splitPlain, menuFooter)) {
       menuActive = splitPlain[menuStart].trim();
       splitRaw = splitRaw.slice(0, menuStart);
       splitPlain = splitPlain.slice(0, menuStart);
@@ -412,7 +419,7 @@
     }
     if(start<0) return null;
     const rest=lines.slice(start+1), footer=rest.findIndex(l=>agent==='codex' ? /enter (?:select|default|resume).*esc (?:back|close|cancel)/i.test(l) : /(?:Keyboard:.*(?:Navigate|Select|Switch View).*esc|(?:↑\/↓|up\/down).*enter.*esc)/i.test(l));
-    if(footer<0) return null;
+    if(footer<0 || hasDialogueAfterMenu(rest, footer)) return null;
     const body=rest.slice(0,footer), options=[];
     if(kind==='permission-scope' && !body.some(l=>l.trim()==='Select a config scope to edit:')) return null;
     let selected=-1, begun=false;

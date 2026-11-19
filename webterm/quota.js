@@ -51,6 +51,14 @@ function readAgyCliCache() {
   return null;
 }
 
+function formatDynamicPoolLabel(pool, kind) {
+  let win = '';
+  if (/Weekly/i.test(kind)) win = '周池';
+  else if (/Five Hour|5h/i.test(kind)) win = '5h';
+  else if (kind && kind.toLowerCase() !== pool.toLowerCase()) win = kind.replace(/\s*Remaining$/i, '').trim();
+  return win ? `${pool} (${win})` : pool;
+}
+
 function triggerAgyCliRefresh(force = false) {
   if (agyCliPromise) return agyCliPromise;
   const c = readAgyCliCache();
@@ -65,6 +73,7 @@ function triggerAgyCliRefresh(force = false) {
         }
         const text = String(stdout || '') + '\n' + String(stderr || '');
         const pools = {};
+        const extraItems = [];
         for (const line of text.split(/\r?\n/)) {
           const parts = line.split('\t').map(s => s.trim());
           if (parts.length < 3) continue;
@@ -74,20 +83,24 @@ function triggerAgyCliRefresh(force = false) {
           const pool = parts[0];
           const kind = parts[1];
           const reset = normalizeResetTime(parts[3] || '');
+          const entry = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
           if (/Argon/i.test(pool) || /Argon/i.test(kind)) {
-            pools.argonWeekly = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
+            pools.argonWeekly = entry;
           } else if (/Gemini/i.test(pool) && /Weekly/i.test(kind)) {
-            pools.geminiWeekly = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
+            pools.geminiWeekly = entry;
           } else if (/Gemini/i.test(pool) && /Five Hour/i.test(kind)) {
-            pools.gemini5h = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
+            pools.gemini5h = entry;
           } else if (/Claude/i.test(pool) && /Weekly/i.test(kind)) {
-            pools.claudeWeekly = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
+            pools.claudeWeekly = entry;
           } else if (/Claude/i.test(pool) && /Five Hour/i.test(kind)) {
-            pools.claude5h = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
+            pools.claude5h = entry;
+          } else {
+            const slug = (pool + '-' + kind).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || ('pool-' + extraItems.length);
+            extraItems.push({ key: slug, label: formatDynamicPoolLabel(pool, kind), ...entry });
           }
         }
-        if (Object.keys(pools).length) {
-          const payload = { ts: Date.now(), pools };
+        if (Object.keys(pools).length || extraItems.length) {
+          const payload = { ts: Date.now(), pools, extraItems };
           try {
             fs.writeFileSync(AGY_CLI_CACHE, JSON.stringify(payload));
             cached = null; // invalidate short cache so next poll gets merged result
@@ -114,6 +127,7 @@ async function fetchAntigravity(opts = false) {
   }
   const cliCache = readAgyCliCache();
   const cliPools = (cliCache && cliCache.pools) || {};
+  const cliExtraItems = Array.isArray(cliCache && cliCache.extraItems) ? cliCache.extraItems : [];
 
   const tokFile = path.join(HOME, '.gemini/antigravity-cli/antigravity-oauth-token');
   const d = readJsonSafe(tokFile);
@@ -166,22 +180,25 @@ async function fetchAntigravity(opts = false) {
     items.push({ key: 'argon-w', label: 'Gemini 4 Argon (周池)', ...cliPools.argonWeekly });
   }
   if (cliPools.geminiWeekly) {
-    items.push({ key: 'gem-w', label: 'Gemini 普池 (周池)', ...cliPools.geminiWeekly });
+    items.push({ key: 'gem-w', label: 'Gemini 4 Hydrogen / Neon (周池)', ...cliPools.geminiWeekly });
   }
   if (cliPools.gemini5h) {
-    items.push({ key: 'gem-5h', label: 'Gemini 普池 (5h)', ...cliPools.gemini5h });
+    items.push({ key: 'gem-5h', label: 'Gemini 4 Hydrogen / Neon (5h)', ...cliPools.gemini5h });
   }
-  if (buckets['3p-weekly']) {
+  if (cliPools.claudeWeekly) {
+    items.push({ key: '3p-w', label: 'Claude 5.5 + GPT (周池)', ...cliPools.claudeWeekly });
+  } else if (buckets['3p-weekly']) {
     const left = buckets['3p-weekly'].left;
-    items.push({ key: '3p-w', label: 'Claude+GPT (周池)', leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: buckets['3p-weekly'].reset });
-  } else if (cliPools.claudeWeekly) {
-    items.push({ key: '3p-w', label: 'Claude+GPT (周池)', ...cliPools.claudeWeekly });
+    items.push({ key: '3p-w', label: 'Claude 5.5 + GPT (周池)', leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: buckets['3p-weekly'].reset });
   }
-  if (buckets['3p-5h']) {
+  if (cliPools.claude5h) {
+    items.push({ key: '3p-5h', label: 'Claude 5.5 + GPT (5h)', ...cliPools.claude5h });
+  } else if (buckets['3p-5h']) {
     const left = buckets['3p-5h'].left;
-    items.push({ key: '3p-5h', label: 'Claude+GPT (5h)', leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: buckets['3p-5h'].reset, disabled: buckets['3p-5h'].disabled });
-  } else if (cliPools.claude5h) {
-    items.push({ key: '3p-5h', label: 'Claude+GPT (5h)', ...cliPools.claude5h });
+    items.push({ key: '3p-5h', label: 'Claude 5.5 + GPT (5h)', leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: buckets['3p-5h'].reset, disabled: buckets['3p-5h'].disabled });
+  }
+  for (const extra of cliExtraItems) {
+    items.push(extra);
   }
 
   if (!items.length) {

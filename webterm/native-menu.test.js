@@ -7,3 +7,21 @@ test('unconfirmed output and foreign agent menu never become actionable',()=>{as
 test('wrapped Codex reasoning level menu is a distinct step',()=>{const m=parse('Select Reasoning Level for\n GPT-6.1-Sol\n\n 1. Low (default)\n› 2. Medium (current)\n 3. High\n enter default · s session · esc back','codex');assert.equal(m.kind,'effort');assert.equal(m.selected,1);assert.equal(m.options.length,3)});
 test('agy permission editor is adapted only at the verified scope step',()=>{assert.equal(parse('Permission Config Editor\nSelect a config scope to edit:\n\n> Project\n  Global\n\nKeyboard: ↑/↓ Navigate enter Save esc Close','agy').kind,'permission-scope');assert.equal(parse('Permission Config Editor\nEdit permission rules:\n\n> Allow all\n  Deny all\n\nKeyboard: ↑/↓ Navigate enter Save esc Close','agy'),null)});
 test('agy resume session and mcp pickers are adapted into native menus',()=>{const r=parse('Resume Session\n\n> 2026-11-16 修复 webterm\n  2026-11-15 HK 清理\n\nKeyboard: ↑/↓ Navigate enter Select esc Go Back','agy');assert.equal(r.kind,'session');assert.equal(r.options.length,2);assert.equal(parse('MCP Servers\n\n> context7 (connected)\n  playwright (disabled)\n\nKeyboard: ↑/↓ Navigate enter Select esc Close','agy').kind,'mcp')});
+
+for (const [agent, fixture] of [
+  ['codex', 'Select Model\n› 1. Sol (current)\n  2. Astra\nenter select · esc back'],
+  ['agy', 'Switch Model\n> Gemini Argon (current)\n  Gemini Hydrogen\nKeyboard: ↑/↓ Navigate enter Select esc Go Back']
+]) {
+  test(agent + ' old menu followed by a conversation prompt cannot block sending', () => {
+    const screen = fixture + (agent === 'codex' ? '\n› 继续处理\n' : '\n────────────────────\n> 继续处理\n────────────────────\n');
+    assert.equal(parse(screen, agent), null);
+    const history = require('./history-parser').parseTerminalHistory(screen, agent);
+    assert.equal(history.menuActive, '');
+    assert.ok(history.turns.some(t => t.prompt.includes('继续处理')));
+  });
+  test(agent + ' live menu remains active with a status footer', () => {
+    const screen = fixture + '\n\n auto · current model · medium\n';
+    assert.ok(parse(screen, agent));
+    assert.notEqual(require('./history-parser').parseTerminalHistory(screen, agent).menuActive, '');
+  });
+}
