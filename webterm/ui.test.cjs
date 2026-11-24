@@ -23,7 +23,10 @@ const fs = require('fs');
  await test('uncertain send never falls back and duplicates',async()=>{assert.deepEqual(await page.evaluate(async()=>{const p=getFocusedPaneEl(),w=p.querySelector('iframe').contentWindow;let calls=0;w.term={paste(){calls++},input(){calls++}};const old=window.fetch;window.fetch=async()=>{throw Error('response lost')};const ok=await submitFromHist(p,'hello');window.fetch=old;return {ok,calls}}),{ok:false,calls:0})});
  await test('old path results cannot overwrite slash suggestions',async()=>{const input=page.locator('.hist-input');await input.fill('/tmp/o');await page.waitForTimeout(90);await input.fill('/model');await page.waitForTimeout(350);assert.equal(await page.evaluate(()=>paneHistState.get(getFocusedPaneEl()).acMode),'slash')});
  await test('old drawer count matches rows',async()=>{await page.locator('.hist-older-toggle').click();const count=await page.locator('.hist-older-row').count();const label=await page.locator('.hist-older-toggle').innerText();assert.ok(label.includes(String(count)+' 轮'),`${label}, rows=${count}`)});
- await test('native menu controls exist',async()=>{assert.equal(await page.locator('[data-terminal-key="down"]').count(),1)});
+ await test('native menu controls exist and desktop skips the inline arrow buttons',async()=>{
+  assert.equal(await page.locator('.hist-live [data-terminal-key="down"]').count(),1);
+  assert.equal(await page.locator('.hist-compose [data-terminal-key="down"]').isVisible(),false);
+ });
  await test('reopening retains search and selection',async()=>{assert.equal(await page.evaluate(()=>{const p=getFocusedPaneEl(),s=paneHistState.get(p);s.searchEl.value='问题';closeHistoryOverlay(p);openHistoryOverlay(p);return s.searchEl.value}),'问题')});
  await test('slash catalogs stay agent-specific',async()=>{assert.deepEqual(await page.evaluate(()=>({model:buildSlashItems('agy','/model').map(x=>x.label),wrong:buildSlashItems('agy','/sandbox').length,codex:buildSlashItems('codex','/model').map(x=>x.label)})),{model:['/model'],wrong:0,codex:['/model']})});
  await test('slash Enter accepts without sending',async()=>{await page.locator('.hist-input').fill('/mod');await page.locator('.hist-input').press('Enter');assert.match(await page.locator('.hist-input').inputValue(),/^\/model\s*$/)});

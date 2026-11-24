@@ -2,12 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 
 const HOME = os.homedir();
-const CACHE_TTL_MS = 30 * 1000;
-const AGY_CLI_TTL_MS = 180 * 1000;
-const AGY_CLI_CACHE = '/tmp/wt-agy-cli-quota.json';
+const CACHE_TTL_MS = 20 * 1000;
+const AGY_CLI_TTL_MS = 60 * 1000;
+const AGY_CLI_CACHE = path.join(HOME, '.local/state/webterm/agy-cli-quota.json');
+const MAX_QUOTA_RESPONSE = 2 * 1024 * 1024;
 const AGY_BIN = process.env.AGY_BIN || path.join(HOME, '.local/bin/agy');
 
 let cached = null;
@@ -36,7 +38,14 @@ async function fetchJson(url, opts = {}, timeoutMs = 8000) {
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...opts, signal: ac.signal });
-    const text = await res.text();
+    const chunks = [];
+    let size = 0;
+    if (res.body) for await (const chunk of res.body) {
+      size += chunk.length;
+      if (size > MAX_QUOTA_RESPONSE) throw new Error('quota response too large');
+      chunks.push(chunk);
+    }
+    const text = Buffer.concat(chunks, size).toString('utf8');
     let json = null;
     try { json = JSON.parse(text); } catch (e) {}
     return { ok: res.ok, status: res.status, json, text };
@@ -45,18 +54,85 @@ async function fetchJson(url, opts = {}, timeoutMs = 8000) {
   }
 }
 
+function writeAgyCliCache(payload) {
+  const dir = path.dirname(AGY_CLI_CACHE);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temp = path.join(dir, '.quota-' + crypto.randomUUID());
+  let created = false;
+  let fd;
+  try {
+    fd = fs.openSync(temp, 'wx', 0o600);
+    created = true;
+    fs.writeFileSync(fd, JSON.stringify(payload));
+    fs.renameSync(temp, AGY_CLI_CACHE);
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+    if (created) {
+      try { fs.unlinkSync(temp); } catch {}
+    }
+  }
+}
+
 function readAgyCliCache() {
   const c = readJsonSafe(AGY_CLI_CACHE);
-  if (c && typeof c.ts === 'number' && c.pools) return c;
+  if (c && typeof c.ts === 'number' && (Array.isArray(c.entries) || c.pools)) return c;
   return null;
 }
 
-function formatDynamicPoolLabel(pool, kind) {
+function readAgySelectedModel() {
+  const s = readJsonSafe(path.join(HOME, '.gemini/antigravity-cli/settings.json'));
+  const raw = s && typeof s.model === 'string' ? s.model.trim() : '';
+  return raw ? raw.replace(/\s*\((?:Low|Medium|High)\)\s*$/i, '').trim() : '';
+}
+
+function readCodexCurrentModel() {
+  try {
+    const txt = fs.readFileSync(path.join(HOME, '.codex/config.toml'), 'utf8');
+    const m = txt.match(/^\s*model\s*=\s*["']([^"']+)["']/m);
+    if (m && m[1]) return m[1].trim();
+  } catch (e) {}
+  const cache = readJsonSafe(path.join(HOME, '.codex/models_cache.json'));
+  const first = cache && Array.isArray(cache.models) && cache.models[0];
+  return (first && (first.slug || first.id || first.display_name)) || '';
+}
+
+function extractLatestClaudeVersion(models) {
+  if (!models || typeof models !== 'object') return '';
+  let best = '';
+  let bestNum = -1;
+  for (const [id, info] of Object.entries(models)) {
+    const src = `${(info && info.displayName) || ''} ${id}`;
+    const m = src.match(/claude(?:[\s-]+(?:opus|sonnet|haiku))?[\s-]+(\d+)[.-](\d+)/i);
+    if (!m) continue;
+    const num = Number(m[1]) * 100 + Number(m[2]);
+    if (num > bestNum) {
+      bestNum = num;
+      best = `${m[1]}.${m[2]}`;
+    }
+  }
+  return best;
+}
+
+function formatDynamicPoolLabel(pool, kind, dynamicHints = {}) {
   let win = '';
   if (/Weekly/i.test(kind)) win = '周池';
   else if (/Five Hour|5h/i.test(kind)) win = '5h';
   else if (kind && kind.toLowerCase() !== pool.toLowerCase()) win = kind.replace(/\s*Remaining$/i, '').trim();
-  return win ? `${pool} (${win})` : pool;
+
+  let base = String(pool || '').trim();
+  if (/^Claude\s+and\s+GPT\s+models$/i.test(base)) {
+    base = dynamicHints.claudeVer ? `Claude ${dynamicHints.claudeVer} + GPT` : 'Claude + GPT';
+  }
+  return win ? `${base} (${win})` : base;
+}
+
+function inferPoolKey(pool, kind, fallbackIndex) {
+  if (/Argon/i.test(pool) || /Argon/i.test(kind)) return 'argon-w';
+  if (/Gemini/i.test(pool) && /Weekly/i.test(kind)) return 'gem-w';
+  if (/Gemini/i.test(pool) && /Five Hour|5h/i.test(kind)) return 'gem-5h';
+  if (/Claude/i.test(pool) && /Weekly/i.test(kind)) return '3p-w';
+  if (/Claude/i.test(pool) && /Five Hour|5h/i.test(kind)) return '3p-5h';
+  return (pool + '-' + kind).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || ('pool-' + fallbackIndex);
 }
 
 function triggerAgyCliRefresh(force = false) {
@@ -72,8 +148,7 @@ function triggerAgyCliRefresh(force = false) {
           return;
         }
         const text = String(stdout || '') + '\n' + String(stderr || '');
-        const pools = {};
-        const extraItems = [];
+        const entries = [];
         for (const line of text.split(/\r?\n/)) {
           const parts = line.split('\t').map(s => s.trim());
           if (parts.length < 3) continue;
@@ -83,27 +158,21 @@ function triggerAgyCliRefresh(force = false) {
           const pool = parts[0];
           const kind = parts[1];
           const reset = normalizeResetTime(parts[3] || '');
-          const entry = { leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: reset };
-          if (/Argon/i.test(pool) || /Argon/i.test(kind)) {
-            pools.argonWeekly = entry;
-          } else if (/Gemini/i.test(pool) && /Weekly/i.test(kind)) {
-            pools.geminiWeekly = entry;
-          } else if (/Gemini/i.test(pool) && /Five Hour/i.test(kind)) {
-            pools.gemini5h = entry;
-          } else if (/Claude/i.test(pool) && /Weekly/i.test(kind)) {
-            pools.claudeWeekly = entry;
-          } else if (/Claude/i.test(pool) && /Five Hour/i.test(kind)) {
-            pools.claude5h = entry;
-          } else {
-            const slug = (pool + '-' + kind).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || ('pool-' + extraItems.length);
-            extraItems.push({ key: slug, label: formatDynamicPoolLabel(pool, kind), ...entry });
-          }
+          entries.push({
+            key: inferPoolKey(pool, kind, entries.length),
+            pool,
+            kind,
+            leftPct: left,
+            usedPct: Math.round((100 - left) * 10) / 10,
+            resetAt: reset
+          });
         }
-        if (Object.keys(pools).length || extraItems.length) {
-          const payload = { ts: Date.now(), pools, extraItems };
+        if (entries.length) {
+          const payload = { ts: Date.now(), entries };
           try {
-            fs.writeFileSync(AGY_CLI_CACHE, JSON.stringify(payload));
-            cached = null; // invalidate short cache so next poll gets merged result
+            writeAgyCliCache(payload);
+            cached = null;
+            liveProvidersCache = null;
           } catch (e) {}
           resolve(payload);
           return;
@@ -126,8 +195,7 @@ async function fetchAntigravity(opts = false) {
     await refreshPromise;
   }
   const cliCache = readAgyCliCache();
-  const cliPools = (cliCache && cliCache.pools) || {};
-  const cliExtraItems = Array.isArray(cliCache && cliCache.extraItems) ? cliCache.extraItems : [];
+  const cliEntries = Array.isArray(cliCache && cliCache.entries) ? cliCache.entries : [];
 
   const tokFile = path.join(HOME, '.gemini/antigravity-cli/antigravity-oauth-token');
   const d = readJsonSafe(tokFile);
@@ -135,6 +203,7 @@ async function fetchAntigravity(opts = false) {
   const accessToken = t && t.access_token;
 
   const buckets = {};
+  let liveModels = null;
 
   if (accessToken) {
     const headers = {
@@ -152,6 +221,8 @@ async function fetchAntigravity(opts = false) {
       for (const g of (sumRes.value.json.groups || [])) {
         for (const b of (g.buckets || [])) {
           buckets[b.bucketId] = {
+            groupName: g.displayName || '',
+            displayName: b.displayName || '',
             left: Math.round(Number(b.remainingFraction || 0) * 1000) / 10,
             reset: b.resetTime || '',
             disabled: !!b.disabled
@@ -161,13 +232,15 @@ async function fetchAntigravity(opts = false) {
     }
 
     if (modRes.status === 'fulfilled' && modRes.value.ok && modRes.value.json && modRes.value.json.models) {
-      const models = modRes.value.json.models;
+      liveModels = modRes.value.json.models;
       if (!buckets['3p-weekly']) {
-        const cl = models['claude-sonnet-5-5-high'] || models['claude-opus-5-5-high'];
-        if (cl && cl.quotaInfo) {
+        const clEntry = Object.entries(liveModels).find(([k, v]) => /^claude-/i.test(k) && v && v.quotaInfo);
+        if (clEntry && clEntry[1].quotaInfo) {
           buckets['3p-weekly'] = {
-            left: Math.round(Number(cl.quotaInfo.remainingFraction || 0) * 1000) / 10,
-            reset: cl.quotaInfo.resetTime || '',
+            groupName: 'Claude and GPT models',
+            displayName: 'Weekly Limit Remaining',
+            left: Math.round(Number(clEntry[1].quotaInfo.remainingFraction || 0) * 1000) / 10,
+            reset: clEntry[1].quotaInfo.resetTime || '',
             disabled: false
           };
         }
@@ -175,36 +248,88 @@ async function fetchAntigravity(opts = false) {
     }
   }
 
+  const dynamicHints = { claudeVer: extractLatestClaudeVersion(liveModels) };
+  const activeModel = readAgySelectedModel();
+  const plan = activeModel ? `Google AI Pro · ${activeModel}` : 'Google AI Pro';
+
   const items = [];
-  if (cliPools.argonWeekly) {
-    items.push({ key: 'argon-w', label: 'Gemini 4 Argon (周池)', ...cliPools.argonWeekly });
+  const seenKeys = new Set();
+
+  // 优先按 agy -p /usage 真实返回的池子动态输出（将独立池置前或保持清晰顺序）
+  const ordered = [...cliEntries].sort((a, b) => {
+    const rank = k => (k === 'argon-w' ? 0 : k === 'gem-w' ? 1 : k === 'gem-5h' ? 2 : k === '3p-w' ? 3 : k === '3p-5h' ? 4 : 5);
+    return rank(a.key) - rank(b.key);
+  });
+
+  for (const e of ordered) {
+    seenKeys.add(e.key);
+    items.push({
+      key: e.key,
+      label: formatDynamicPoolLabel(e.pool, e.kind, dynamicHints),
+      leftPct: e.leftPct,
+      usedPct: e.usedPct,
+      resetAt: e.resetAt
+    });
   }
-  if (cliPools.geminiWeekly) {
-    items.push({ key: 'gem-w', label: 'Gemini 4 Hydrogen / Neon (周池)', ...cliPools.geminiWeekly });
+
+  // 若 CLI 暂未返回 3p 池，则用云端实时 API 兜底
+  if (!seenKeys.has('3p-w') && buckets['3p-weekly']) {
+    const b = buckets['3p-weekly'];
+    items.push({
+      key: '3p-w',
+      label: formatDynamicPoolLabel(b.groupName || 'Claude and GPT models', b.displayName || 'Weekly Limit Remaining', dynamicHints),
+      leftPct: b.left,
+      usedPct: Math.round((100 - b.left) * 10) / 10,
+      resetAt: b.reset
+    });
   }
-  if (cliPools.gemini5h) {
-    items.push({ key: 'gem-5h', label: 'Gemini 4 Hydrogen / Neon (5h)', ...cliPools.gemini5h });
-  }
-  if (cliPools.claudeWeekly) {
-    items.push({ key: '3p-w', label: 'Claude 5.5 + GPT (周池)', ...cliPools.claudeWeekly });
-  } else if (buckets['3p-weekly']) {
-    const left = buckets['3p-weekly'].left;
-    items.push({ key: '3p-w', label: 'Claude 5.5 + GPT (周池)', leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: buckets['3p-weekly'].reset });
-  }
-  if (cliPools.claude5h) {
-    items.push({ key: '3p-5h', label: 'Claude 5.5 + GPT (5h)', ...cliPools.claude5h });
-  } else if (buckets['3p-5h']) {
-    const left = buckets['3p-5h'].left;
-    items.push({ key: '3p-5h', label: 'Claude 5.5 + GPT (5h)', leftPct: left, usedPct: Math.round((100 - left) * 10) / 10, resetAt: buckets['3p-5h'].reset, disabled: buckets['3p-5h'].disabled });
-  }
-  for (const extra of cliExtraItems) {
-    items.push(extra);
+  if (!seenKeys.has('3p-5h') && buckets['3p-5h']) {
+    const b = buckets['3p-5h'];
+    items.push({
+      key: '3p-5h',
+      label: formatDynamicPoolLabel(b.groupName || 'Claude and GPT models', b.displayName || 'Five Hour Limit Remaining', dynamicHints),
+      leftPct: b.left,
+      usedPct: Math.round((100 - b.left) * 10) / 10,
+      resetAt: b.reset,
+      disabled: b.disabled
+    });
   }
 
   if (!items.length) {
-    return { id: 'agy', name: 'Antigravity', plan: 'Google AI Pro', status: 'err', cliRefreshing: agyCliRunning, error: '暂未拿到额度' };
+    return { id: 'agy', name: 'Antigravity', plan, status: 'err', cliRefreshing: agyCliRunning, error: '暂未拿到额度' };
   }
-  return { id: 'agy', name: 'Antigravity', plan: 'Google AI Pro', status: 'ok', cliRefreshing: agyCliRunning, items };
+  return { id: 'agy', name: 'Antigravity', plan, status: 'ok', cliRefreshing: agyCliRunning, items };
+}
+
+function attachAgyAccounts(provider) {
+  const state = readJsonSafe(path.join(HOME, '.local/state/agy-accounts/quota.json'));
+  const checkedAt = Number.isFinite(state?.checked) ? new Date(state.checked * 1000).toISOString() : null;
+  const windows = [
+    ['argon', 0, 'argon-w', 'Gemini 4 Argon · 周'],
+    ['gemini', 0, 'gem-w', 'Gemini · 周'],
+    ['gemini', 1, 'gem-5h', 'Gemini · 5 小时'],
+    ['third-party', 0, '3p-w', 'Claude + GPT · 周'],
+    ['third-party', 1, '3p-5h', 'Claude + GPT · 5 小时']
+  ];
+  const accounts = ['primary', 'backup'].map(role => {
+    const status = state?.[role + '_status'] || '等待首次查询';
+    const items = [];
+    const missingWindows = [];
+    if (status === '已核验' || status === '服务未返回额度') {
+      for (const [pool, index, key, label] of windows) {
+        const leftPct = state[role]?.[pool]?.[index];
+        if (!Number.isFinite(leftPct) || leftPct < 0 || leftPct > 100) {
+          missingWindows.push(label);
+          continue;
+        }
+        const reportedReset = state.resets?.[role]?.[pool]?.[index];
+        const previous = role === 'primary' && provider.items?.find(item => item.key === key && item.leftPct === leftPct);
+        items.push({ key, label, leftPct, resetAt: reportedReset || previous?.resetAt || '' });
+      }
+    }
+    return { role, email: state?.emails?.[role] || '', status, items, missingWindows };
+  });
+  return { ...provider, accounts, accountsCheckedAt: checkedAt };
 }
 
 function readLatestCodexSessionLimit() {
@@ -216,7 +341,7 @@ function readLatestCodexSessionLimit() {
       for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
         const p = path.join(dir, ent.name);
         if (ent.isDirectory()) walk(p, depth + 1);
-        else if (ent.name.endsWith('.jsonl')) {
+        else if (ent.isFile() && ent.name.endsWith('.jsonl')) {
           files.push({ p, mtime: fs.statSync(p).mtimeMs });
         }
       }
@@ -224,10 +349,20 @@ function readLatestCodexSessionLimit() {
     walk(base, 0);
     files.sort((a, b) => b.mtime - a.mtime);
     for (const f of files.slice(0, 3)) {
-      const lines = fs.readFileSync(f.p, 'utf8').trim().split('\n');
+      const fd = fs.openSync(f.p, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+      let lines;
+      try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile()) continue;
+        const bytes = Math.min(st.size, 2 * 1024 * 1024);
+        const buf = Buffer.allocUnsafe(bytes);
+        const n = fs.readSync(fd, buf, 0, bytes, st.size - bytes);
+        lines = buf.subarray(0, n).toString('utf8').split('\n');
+      } finally { fs.closeSync(fd); }
       for (let i = lines.length - 1; i >= 0; i--) {
         if (!lines[i].includes('rate_limits')) continue;
-        const obj = JSON.parse(lines[i]);
+        let obj;
+        try { obj = JSON.parse(lines[i]); } catch { continue; }
         const rl = obj && obj.payload && obj.payload.rate_limits;
         if (rl && (rl.primary || rl.secondary)) return rl;
       }
@@ -269,7 +404,9 @@ async function fetchCodex() {
             resetAt: rl.secondary_window.reset_at ? new Date(rl.secondary_window.reset_at * 1000).toISOString() : ''
           });
         }
-        return { id: 'codex', name: 'Codex', plan: 'ChatGPT ' + (r.json.plan_type || 'Plus'), status: 'ok', items };
+        const curModel = readCodexCurrentModel();
+        const planBase = 'ChatGPT ' + (r.json.plan_type || 'Plus');
+        return { id: 'codex', name: 'Codex', plan: curModel ? `${planBase} · ${curModel}` : planBase, status: 'ok', items };
       }
     } catch (e) {}
   }
@@ -295,7 +432,9 @@ async function fetchCodex() {
         resetAt: fallback.secondary.resets_at ? new Date(fallback.secondary.resets_at * 1000).toISOString() : ''
       });
     }
-    return { id: 'codex', name: 'Codex', plan: 'ChatGPT ' + (fallback.plan_type || 'Plus'), status: 'ok', items };
+    const curModel = readCodexCurrentModel();
+    const planBase = 'ChatGPT ' + (fallback.plan_type || 'Plus');
+    return { id: 'codex', name: 'Codex', plan: curModel ? `${planBase} · ${curModel}` : planBase, status: 'ok', items };
   }
   return { id: 'codex', name: 'Codex', plan: 'ChatGPT Plus', status: 'err', error: '无法获取 Codex 额度' };
 }
@@ -397,7 +536,13 @@ function clashUnixGet(sockPath, apiPath, timeoutMs = 2500) {
     try {
       const req = http.request({ socketPath: sockPath, path: apiPath, method: 'GET' }, (res) => {
         const chunks = [];
-        res.on('data', (c) => chunks.push(c));
+        let bytes = 0;
+        res.on('data', chunk => {
+          bytes += chunk.length;
+          if (bytes > MAX_QUOTA_RESPONSE) { req.destroy(); finish(null); return; }
+          chunks.push(chunk);
+        });
+        res.on('error', () => finish(null));
         res.on('end', () => {
           try {
             const raw = Buffer.concat(chunks).toString('utf8');
@@ -420,7 +565,7 @@ function clashUnixGet(sockPath, apiPath, timeoutMs = 2500) {
 }
 
 function parseSubscriptionUserInfo(headerVal) {
-  const out = {};
+  const out = Object.create(null);
   for (const part of String(headerVal || '').split(';')) {
     const kv = part.trim().split('=');
     if (kv.length === 2) {
@@ -517,7 +662,7 @@ async function fetchVpnSub(force = false) {
   if (!force && vpnSubCache && (now - vpnSubCacheAt) < VPN_SUB_TTL_MS) {
     return vpnSubCache;
   }
-  if (!force && vpnSubInflight) return vpnSubInflight;
+  if (vpnSubInflight) return vpnSubInflight;
   const work = (async () => {
     const out = { status: 'err' };
     // 1. Read subscription link from protected secrets file (never expose URL/token in JSON)
@@ -552,6 +697,7 @@ async function fetchVpnSub(force = false) {
           if (res && res.ok) {
             subInfo = parseSubscriptionUserInfo(res.headers.get('subscription-userinfo'));
           }
+          if (res?.body) await res.body.cancel().catch(() => {});
         }
       } catch (e) {}
     }
@@ -589,9 +735,7 @@ async function fetchVpnSub(force = false) {
     vpnSubCacheAt = Date.now();
     return out;
   })();
-  if (!force) {
-    vpnSubInflight = work;
-  }
+  vpnSubInflight = work;
   try {
     return await work;
   } finally {
@@ -623,6 +767,7 @@ function startTrafficStream() {
         buf += chunk;
         let idx;
         while ((idx = buf.indexOf('\n')) !== -1) {
+          if (idx > 65536) return res.destroy();
           const line = buf.slice(0, idx).trim();
           buf = buf.slice(idx + 1);
           if (!line) continue;
@@ -639,11 +784,14 @@ function startTrafficStream() {
             }
           } catch (e) {}
         }
+        if (buf.length > 65536) res.destroy();
       });
-      res.on('end', scheduleReconnect);
+      res.on('close', scheduleReconnect);
       res.on('error', scheduleReconnect);
+      if (res.statusCode !== 200) res.destroy();
     });
     req.on('error', scheduleReconnect);
+    req.setTimeout(10000, () => req.destroy());
     req.end();
   }
   connect();
@@ -719,7 +867,7 @@ async function fetchVpn(opts = {}) {
   return result;
 }
 
-const LIVE_PROVIDERS_TTL_MS = 30 * 1000;
+const LIVE_PROVIDERS_TTL_MS = 20 * 1000;
 let liveProvidersCache = null;
 let liveProvidersAt = 0;
 let liveProvidersInflight = null;
@@ -729,21 +877,19 @@ async function getLiveProviders(force = false) {
   if (!force && liveProvidersCache && (now - liveProvidersAt) < LIVE_PROVIDERS_TTL_MS) {
     return liveProvidersCache;
   }
-  if (!force && liveProvidersInflight) return liveProvidersInflight;
+  if (liveProvidersInflight) return liveProvidersInflight;
   const work = (async () => {
     const [agy, codex, deepseek, xpeach] = await Promise.all([
-      fetchAntigravity({ forceCli: force, waitCli: false }),
+      fetchAntigravity({ forceCli: force, waitCli: force }),
       fetchCodex(),
       fetchDeepSeek(),
       fetchXPeach()
     ]);
-    liveProvidersCache = [agy, codex, deepseek, xpeach];
+    liveProvidersCache = [attachAgyAccounts(agy), codex, deepseek, xpeach];
     liveProvidersAt = Date.now();
     return liveProvidersCache;
   })();
-  if (!force) {
-    liveProvidersInflight = work;
-  }
+  liveProvidersInflight = work;
   try {
     return await work;
   } finally {
@@ -785,7 +931,7 @@ async function getQuota(opts = false) {
         fetchXPeach(),
         fetchVpn()
       ]);
-      const providers = [agy, codex, deepseek, xpeach];
+      const providers = [attachAgyAccounts(agy), codex, deepseek, xpeach];
       const usage = getTokenUsage({ providers, force });
       cached = { updatedAt: new Date().toISOString(), providers, vpn, usage };
       cachedAt = Date.now();

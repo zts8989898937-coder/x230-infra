@@ -38,10 +38,7 @@
     const content = normalizeContentArray(payload.content, 'input_text');
     const kinds = getContentItemKinds(payload, record);
 
-    if (kinds && kinds.length > 0 && kinds.length !== content.length) {
-      const hasUserKind = kinds.some((k) => typeof k === 'string' && k.startsWith('user.'));
-      if (!hasUserKind) return '';
-    }
+    if (kinds?.length && kinds.length !== content.length) return '';
 
     const texts = [];
     let hasInputImage = false;
@@ -76,10 +73,12 @@
     return '';
   }
 
+  function isVisibleAssistantPhase(phase) {
+    return !phase || phase === 'commentary' || phase === 'final' || phase === 'final_answer';
+  }
+
   function extractAssistantReply(payload) {
-    if (payload.phase && payload.phase !== 'commentary' && payload.phase !== 'final') {
-      return '';
-    }
+    if (!isVisibleAssistantPhase(payload.phase)) return '';
     const content = normalizeContentArray(payload.content, 'output_text');
     const texts = [];
     for (const item of content) {
@@ -95,6 +94,7 @@
 
   function createIdAllocator() {
     const used = new Set();
+    const nextSuffix = new Map();
     return function allocateId(preferred, index) {
       const raw = preferred !== undefined && preferred !== null ? String(preferred).trim() : '';
       const base = raw || `turn-${index}`;
@@ -102,8 +102,9 @@
         used.add(base);
         return base;
       }
-      let suffix = 2;
+      let suffix = nextSuffix.get(base) || 2;
       while (used.has(`${base}-${suffix}`)) suffix++;
+      nextSuffix.set(base, suffix + 1);
       const unique = `${base}-${suffix}`;
       used.add(unique);
       return unique;
@@ -130,7 +131,7 @@
   }
 
   function parseCodexRollout(text) {
-    const result = { threadId: '', cwd: '', model: '', turns: [] };
+    const result = { threadId: '', cwd: '', model: '', effort: '', turns: [] };
     if (typeof text !== 'string' || !text.trim()) return result;
 
     const modernTurns = [];
@@ -160,7 +161,10 @@
 
       if (record.type === 'turn_context') {
         const tc = payload || record;
-        if (typeof tc.model === 'string' && tc.model) result.model = tc.model;
+        if (typeof tc.model === 'string' && tc.model) {
+          result.model = tc.model;
+          result.effort = typeof tc.effort === 'string' ? tc.effort : '';
+        }
         if (!result.cwd && typeof tc.cwd === 'string' && tc.cwd) result.cwd = tc.cwd;
         continue;
       }
@@ -195,10 +199,10 @@
           if (!prompt && Array.isArray(payload.images) && payload.images.length > 0) {
             prompt = '[图片]';
           }
-          if (prompt) {
+          if (prompt && !isFallbackContextText(prompt)) {
             legacyTurns.push({ preferredId: payload.id, prompt, replyParts: [] });
           }
-        } else if (payload.type === 'agent_message') {
+        } else if (payload.type === 'agent_message' && isVisibleAssistantPhase(payload.phase)) {
           const msg = typeof payload.message === 'string'
             ? payload.message
             : (typeof payload.text === 'string' ? payload.text : '');
@@ -215,5 +219,5 @@
     return result;
   }
 
-  return { parseCodexRollout };
+  return { parseCodexRollout, isVisibleAssistantPhase };
 }));

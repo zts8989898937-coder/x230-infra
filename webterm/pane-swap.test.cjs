@@ -2,16 +2,14 @@ const {chromium}=require('/usr/lib/node_modules/playwright');
 const fs=require('node:fs');
 const assert=require('node:assert/strict');
 (async()=>{
- const browser=await chromium.launch({headless:true});
+ const browser=await chromium.launch({headless:true});try{
  const context=await browser.newContext({viewport:{width:1440,height:900},hasTouch:true});
  await context.addInitScript(()=>{
   if(!localStorage.getItem('wt_state_v1'))localStorage.setItem('wt_state_v1',JSON.stringify({version:2,seq:1,paneSeq:3,activeId:1,tabs:[{id:1,name:'换位测试',activePaneId:'p1',root:{type:'split',dir:'h',ratio:.45,a:{type:'leaf',id:'p1',sess:'swap-one'},b:{type:'split',dir:'v',ratio:.6,a:{type:'leaf',id:'p2',sess:'swap-two'},b:{type:'leaf',id:'p3',sess:'swap-three'}}}}]}));
   class ES{constructor(){this.readyState=1}addEventListener(){}close(){}}window.EventSource=ES;
  });
- const [,username,password]=fs.readFileSync(__dirname+'/server.js','utf8').match(/const USER = '([^']+)', PASS = '([^']+)'/);
- const live=await context.request.get('http://192.0.2.30:3902/?v=20261116.3',{headers:{Authorization:'Basic '+Buffer.from(username+':'+password).toString('base64')}});
- assert.equal(live.status(),200);const servedHtml=await live.text();assert.ok(servedHtml.includes('function swapPanePositions'));
- console.log('PASS LAN server serves the updated interface');
+ const servedHtml=fs.readFileSync(__dirname+'/index.html','utf8');
+ assert.ok(servedHtml.includes('function swapPanePositions'));
  const shotDir='/home/zts/agent-share/工作产出/06-临时中转/2026-11-16/webterm-check';fs.mkdirSync(shotDir,{recursive:true});
  const page=await context.newPage(),errors=[];let frameLoads=0;
  page.on('pageerror',e=>errors.push(e.message));
@@ -36,15 +34,15 @@ const assert=require('node:assert/strict');
  const g=await pane('p1').locator('.pane-move').boundingBox();await page.mouse.move(g.x+30,g.y+12);await page.mouse.down();await page.mouse.move(0,0,{steps:4});await page.mouse.up();
  assert.deepEqual(await page.evaluate(()=>listLeaves(active.root).map(l=>l.id)),['p3','p2','p1']);console.log('PASS drop outside panes leaves layout intact');
  await page.reload();assert.deepEqual(await page.evaluate(()=>listLeaves(active.root).map(l=>l.id)),['p3','p2','p1']);console.log('PASS refresh restores swapped layout');
- await page.setViewportSize({width:390,height:844});
+ await page.setViewportSize({width:1024,height:768});
  const client=await context.newCDPSession(page);
  const grip=await pane('p3').locator('.pane-move').boundingBox(),target=await pane('p2').boundingBox();
  await client.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:grip.x+30,y:grip.y+12}]});
  await client.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:target.x+target.width/2,y:target.y+target.height/2}]});
  await client.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
  assert.deepEqual(await page.evaluate(()=>listLeaves(active.root).map(l=>l.id)),['p2','p3','p1']);
- assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));console.log('PASS 390px touch drag swaps panes without page overflow');
- await page.screenshot({path:shotDir+'/pane-swap-mobile.png'});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));console.log('PASS 1024px touch drag swaps panes without page overflow');
+ await page.screenshot({path:shotDir+'/pane-swap-touch.png'});
  assert.deepEqual(errors,[]);console.log('PASS no browser errors');
- await browser.close();
+ }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

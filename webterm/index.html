@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0a0c">
 <title>X230 工作台</title>
 <meta name="wt-release" content="20261116.2">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CjxyZWN0IHg9IjIuNSIgeT0iNC41IiB3aWR0aD0iMjciIGhlaWdodD0iMjMiIHJ4PSI0LjUiIGZpbGw9IiMwYzEyMTAiIHN0cm9rZT0iIzNlY2Y4ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxwYXRoIGQ9Ik04LjUgMTEuNWw0LjIgNC4yLTQuMiA0LjIiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2VhZmZmNCIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8cmVjdCB4PSIxNiIgeT0iMTkuMiIgd2lkdGg9IjgiIGhlaWdodD0iMi42IiByeD0iMS4zIiBmaWxsPSIjM2VjZjhlIi8+Cjwvc3ZnPg==">
@@ -96,7 +100,7 @@
   .qsep{color:rgba(241,236,227,0.16)}
   #quota-mobile-lbl{display:none}
 
-  #quota-pop{position:fixed;top:44px;right:10px;width:368px;max-width:calc(100vw - 20px);max-height:calc(100vh - 58px);overflow-y:auto;background:#0e0e11;border:1px solid var(--line-strong);border-radius:6px;box-shadow:0 18px 48px rgba(0,0,0,0.62);padding:12px;z-index:100;display:none}
+  #quota-pop{position:fixed;top:44px;right:10px;width:368px;max-width:calc(100vw - 20px);max-height:calc(100vh - 58px);max-height:calc(100dvh - 58px);overflow-y:auto;background:#0e0e11;border:1px solid var(--line-strong);border-radius:6px;box-shadow:0 18px 48px rgba(0,0,0,0.62);padding:12px;z-index:100;display:none}
   #quota-pop.open{display:block}
   .qhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
   .qtitle{font-weight:600;color:var(--ink);font-size:12.5px}
@@ -119,6 +123,8 @@
   .qerr{color:var(--crit);font-size:11.5px}
 
   #acts{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+  .single-pane #split-h,.single-pane #split-v,.single-pane #close-pane{display:none}
+  #mobile-pane-select{height:36px;padding:0 6px;border:1px solid var(--line);border-radius:5px;background:#18181c;color:var(--ink);font:16px var(--ui)}
 
   /* 舞台与扁平绝对定位窗格 */
   #stage{flex:1 1 auto;position:relative;min-height:0;background:transparent;overflow:hidden;transition:opacity .18s ease}
@@ -126,7 +132,8 @@
   .pane.on{display:block}
   .pane::before{content:"";position:absolute;top:0;left:0;right:0;height:1.5px;background:transparent;pointer-events:none;z-index:5;transition:background .12s}
   #stage.multi .pane.on.focused::before{background:linear-gradient(90deg,var(--accent),var(--accent2))}
-  .pane iframe{width:100%;height:100%;border:0;display:block;background:transparent}
+  /* Keep ttyd from resizing tmux to 2×1 when the browser briefly collapses a pane. */
+  .pane iframe{width:100%;height:100%;min-width:176px;min-height:112px;border:0;display:block;background:transparent}
   .pane.hist-active > iframe{opacity:0;pointer-events:none}
 
   .pane-move{display:none;position:absolute;inset:0 0 auto;height:25px;z-index:40;border:0;border-bottom:1px solid var(--line-soft);background:rgba(10,10,12,.75);color:var(--muted);font:11px/1 var(--ui);text-align:left;padding:0 10px;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
@@ -161,6 +168,13 @@
   #hist-btn.active{color:var(--ink);border-color:rgba(238,152,51,.48);background:rgba(238,152,51,.14)}
   html.wt-public-fold #hist-btn,
   html.wt-public-fold .hist-btn[data-act="close"]{display:none!important}
+  html.wt-perf-lite #bg-wall-blur{filter:none!important;background-image:none!important;background:#0a0a0c!important}
+  html.wt-perf-lite #wall-exit,
+  html.wt-perf-lite .sel-pop,
+  html.wt-perf-lite .hist-ac,
+  html.wt-perf-lite #mobile-keybar,
+  html.wt-perf-lite .pane.drag-over::after,
+  html.wt-perf-lite .pane-hist.drag-over::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
   .pane-hist{position:absolute;inset:0;z-index:25;display:none;flex-direction:column;background:transparent;color:var(--ink);font-family:var(--ui);contain:layout style paint}
   .pane-hist.open{display:flex;overflow:hidden}
   .hist-bar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--line-soft);background:rgba(10,10,12,.30)}
@@ -171,7 +185,7 @@
   .hist-acts{display:flex;align-items:center;gap:6px;margin-left:auto}
   .hist-btn{height:24px;padding:0 8px;border-radius:4px;border:1px solid var(--line);background:rgba(241,236,227,.025);color:var(--muted);font:500 11.5px/1 var(--ui);cursor:pointer;white-space:nowrap;transition:background .14s,color .14s,border-color .14s}
   .hist-btn:hover,.hist-btn[aria-pressed=true]{color:var(--ink);background:rgba(238,152,51,.12);border-color:rgba(238,152,51,.48)}
-  .hist-list{flex:1 1 0;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;padding:10px 12px 18px;display:flex;flex-direction:column;gap:8px;contain:content}
+  .hist-list{flex:1 1 0;min-height:0;overflow-y:auto;overflow-anchor:none;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;padding:10px 12px 18px;display:flex;flex-direction:column;gap:8px;contain:content}
   .hist-empty{padding:24px 12px;text-align:center;color:var(--muted);font-size:12.5px}
 
   .hist-older-host{position:relative;z-index:30;flex:0 0 auto;display:none;padding:4px 12px 2px;border-bottom:1px solid var(--line-soft);background:rgba(10,10,12,.22)}
@@ -183,6 +197,8 @@
   .hist-older-row{flex-shrink:0}
   .pane-hist.compact .hist-banner{display:none}
   .pane-hist.compact .hist-search{height:28px}
+  .hist-model-pill{display:none;flex:0 1 auto;min-width:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1.5px 6px;border-radius:4px;border:1px solid rgba(131,184,202,.24);background:rgba(131,184,202,.10);color:var(--accent2);font:10.5px/1.2 var(--mono)}
+  .pane-hist.compact .hist-model-pill:not([hidden]){display:inline-block}
   .hist-older-row{position:relative;width:100%;display:flex;align-items:center;gap:8px;padding:5px 6px;border:0;border-top:1px solid var(--line-soft);background:transparent;color:var(--ink-dim);font:12px/1.35 var(--ui);cursor:pointer;text-align:left;border-radius:3px;transition:padding-left .18s cubic-bezier(.22,1,.36,1),color .14s,background .14s}
   .hist-older-row:hover{background:rgba(238,152,51,.07);color:var(--ink);padding-left:10px}
   .hist-older-row.active{background:rgba(238,152,51,.12);color:var(--ink)}
@@ -203,12 +219,15 @@
   .hist-agent-body{min-width:0;display:flex;flex-direction:column;gap:3px}
   .hist-agent-top{display:flex;align-items:center;flex-wrap:wrap;gap:7px;min-width:0}
   .hist-agent-name{font:600 12.5px/1.2 var(--ui);color:var(--ink);letter-spacing:.01em}
-  .hist-agent-model{padding:2px 6px;border-radius:4px;border:1px solid rgba(131,184,202,.24);background:rgba(131,184,202,.08);color:var(--accent2);font:11px/1.15 var(--mono)}
+  .hist-agent-model{max-width:100%;overflow-wrap:anywhere;padding:2px 6px;border-radius:4px;border:1px solid rgba(131,184,202,.24);background:rgba(131,184,202,.08);color:var(--accent2);font:11px/1.15 var(--mono)}
   .hist-agent-cwd{font:11px/1.25 var(--mono);color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hist-turn-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font:11px/1 var(--mono);color:var(--muted);letter-spacing:.04em}
   .hist-back-latest{border:0;background:transparent;color:var(--accent);font:11.5px/1 var(--ui);cursor:pointer;padding:2px 4px}
   .hist-back-latest:hover{text-decoration:underline}
-  .hist-prompt{background:rgba(241,236,227,.042);border-left:2px solid var(--accent);padding:7px 11px;border-radius:4px;white-space:pre-wrap;word-break:break-word;font:13px/1.52 var(--mono);color:var(--ink);user-select:text;-webkit-user-select:text}
+  .hist-prompt{position:relative;background:rgba(241,236,227,.042);border-left:2px solid var(--accent);padding:7px 11px;border-radius:4px;white-space:pre-wrap;word-break:break-word;font:13px/1.52 var(--mono);color:var(--ink);user-select:text;-webkit-user-select:text}
+  .hist-copy-row{display:flex;justify-content:flex-end;gap:6px;margin-top:2px}
+  .hist-copy-btn{height:24px;padding:0 9px;border-radius:4px;border:1px solid var(--line-soft);background:rgba(241,236,227,.03);color:var(--muted);font:11px/1 var(--ui);cursor:pointer;touch-action:manipulation}
+  .hist-copy-btn:hover,.hist-copy-btn:active{color:var(--ink);border-color:rgba(238,152,51,.48);background:rgba(238,152,51,.12)}
   .hist-prompt .ansi-pill{background:transparent!important;padding:0;border-radius:0}
   .hist-list,.hist-older-list,.hist-quotes,.hist-input,.hist-ac-list,#quota-pop{scrollbar-width:thin;scrollbar-color:rgba(241,236,227,.16) transparent}
   .hist-list::-webkit-scrollbar,.hist-older-list::-webkit-scrollbar,.hist-quotes::-webkit-scrollbar,.hist-input::-webkit-scrollbar,.hist-ac-list::-webkit-scrollbar,#quota-pop::-webkit-scrollbar{width:5px;height:5px}
@@ -317,6 +336,7 @@
   .hist-send{height:34px;padding:0 13px;border-radius:5px;border:1px solid rgba(238,152,51,.52);background:rgba(238,152,51,.16);color:var(--ink);font:600 12px/1 var(--ui);cursor:pointer;white-space:nowrap;transition:background .14s,border-color .14s}
   .hist-send:hover{background:rgba(238,152,51,.28);border-color:var(--accent)}
   .hist-ctl{height:34px;padding:0 9px;border-radius:5px;border:1px solid var(--line);background:rgba(241,236,227,.025);color:var(--muted);font:500 11.5px/1 var(--mono);cursor:pointer;white-space:nowrap;transition:color .14s,border-color .14s}
+  .hist-ctl.hist-arrow{display:none}
   .hist-ctl:hover{color:var(--ink);border-color:rgba(238,152,51,.45)}
 
   @media (max-width: 820px){
@@ -336,14 +356,29 @@
     .hist-compose-row{gap:6px}
     .hist-input{font-size:12.5px;padding:8px 9px}
   }
-  .hist-status,.hist-task-status{flex:0 0 auto;font-size:10px;color:var(--muted);white-space:nowrap}
-  .hist-task-status[data-state=running]{color:var(--ok)}
-  .hist-task-status[data-state=action]{color:var(--warn);font-weight:600}
+  .hist-status,.hist-task-status{flex:0 0 auto;font-size:10.5px;color:var(--muted);white-space:nowrap}
+  .hist-task-status{display:inline-flex;align-items:center;gap:4px;padding:1.5px 7px;border-radius:999px;border:1px solid transparent;line-height:1.3}
+  .hist-task-status[data-state=running]{color:var(--accent2);background:rgba(131,184,202,.14);border-color:rgba(131,184,202,.34);font-weight:600}
+  .hist-task-status[data-state=running]::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:wtSpinCodex 1.15s ease-in-out infinite}
+  .hist-task-status[data-state=done]{color:var(--ok);background:rgba(152,184,140,.16);border-color:rgba(152,184,140,.42);font-weight:600}
+  .hist-task-status[data-state=action]{color:var(--warn);background:rgba(238,152,51,.16);border-color:rgba(238,152,51,.42);font-weight:600}
+  .hist-task-status[data-state=input]{color:var(--muted);border-color:var(--line-soft)}
+  .pane-hist[data-task=running] .hist-bar{border-bottom-color:rgba(131,184,202,.32)}
+  .pane-hist[data-task=done] .hist-bar{border-bottom-color:rgba(152,184,140,.42)}
+  .pane-hist[data-task=action] .hist-bar{border-bottom-color:rgba(238,152,51,.48)}
   .hist-title{min-width:0;max-width:42%;overflow:hidden;text-overflow:ellipsis;letter-spacing:.02em}
   .hist-acts{flex:0 0 auto}
   .hist-input{min-width:0}
   .hist-reply,.hist-prompt{overflow-wrap:anywhere;tab-size:4}
   .hist-compose{padding-bottom:max(8px,env(safe-area-inset-bottom))}
+  html.kb-open .hist-compose{padding-bottom:8px}
+  html.kb-open .hist-native{max-height:calc(var(--wt-viewport-height) * .30)}
+  html.kb-open .hist-slash-out,html.kb-open .pane-hist .hist-live[open]{max-height:calc(var(--wt-viewport-height) * .18)}
+  html.kb-open .hist-input{max-height:calc(var(--wt-viewport-height) * .24)}
+  html.kb-open .hist-ac{max-height:min(248px,calc(var(--wt-viewport-height) * .35))}
+  html.kb-open .hist-quotes{max-height:min(110px,calc(var(--wt-viewport-height) * .2))}
+  html.kb-open .hist-native-preview{max-height:calc(var(--wt-viewport-height) * .24)}
+  .tab,.icon-btn,#quota-pill,.hist-ctl,.hist-send,.hist-native button,.hist-jump{touch-action:manipulation}
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   @media (min-width:821px){
     .hist-list{padding:18px max(24px,calc((100% - 1080px)/2)) 24px}
@@ -367,13 +402,47 @@
   .term-connection{position:absolute;inset:auto 12px 14px;z-index:20;padding:12px;background:#161618;border:1px solid var(--line-strong);border-radius:6px;color:var(--ink);font-size:13px}
   .term-connection p{margin:0 0 10px}.term-connection button{padding:8px;border:1px solid var(--line);border-radius:4px;color:var(--ink);background:#252529;cursor:pointer}
   .term-connection[hidden],.pane.hist-active>.term-connection{display:none}
-  .hist-native{flex:0 0 auto;max-height:48vh;overflow:auto;margin:0 10px 8px;padding:12px;border:1px solid var(--line-strong);border-radius:6px;background:rgba(14,14,17,.94)}
+  .hist-native{flex:0 0 auto;max-height:48%;overflow:auto;margin:0 10px 8px;padding:12px;border:1px solid var(--line-strong);border-radius:6px;background:rgba(14,14,17,.94)}
   .hist-native[hidden]{display:none}.hist-native h3{font-size:14px;margin:0 0 8px}.hist-native p{font-size:12px;color:var(--muted);margin:6px 0}
   .hist-native-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:6px}
-  .hist-native button{font:inherit;color:var(--ink);border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:9px 11px;min-height:38px;cursor:pointer;text-align:left}
+  .hist-native button{font:inherit;color:var(--ink);border:1px solid var(--line);background:var(--surface);border-radius:5px;padding:9px 11px;min-height:38px;cursor:pointer;text-align:left;word-break:break-word;white-space:normal}
   .hist-native button[aria-pressed=true]{border-color:var(--accent);background:rgba(238,152,51,.16)}.hist-native button:disabled{opacity:.5;cursor:wait}
   .hist-native-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}.hist-native-actions [data-native-action=confirm]{border-color:var(--accent)}
   .hist-native-preview{margin:8px 0;padding:8px 10px;max-height:24vh;overflow:auto;white-space:pre;border:1px solid var(--line-soft);border-radius:5px;background:rgba(8,8,10,.7);font:12px/1.45 var(--mono);color:var(--ink-dim);user-select:text;-webkit-user-select:text}
+  .hist-slash-out{flex:0 0 auto;max-height:34%;overflow:auto;margin:0 10px 8px;padding:9px 11px;border:1px solid rgba(131,184,202,.32);border-radius:6px;background:rgba(12,14,18,.92)}
+  .hist-slash-out[hidden]{display:none}
+  .hist-slash-out-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font:500 11.5px/1 var(--mono);color:var(--accent2)}
+  .hist-slash-out-close{height:22px;padding:0 8px;border-radius:4px;border:1px solid var(--line);background:rgba(241,236,227,.04);color:var(--muted);font:11px/1 var(--ui);cursor:pointer}
+  .hist-slash-out-close:hover{color:var(--ink);border-color:var(--accent)}
+  .hist-slash-out-pre{margin:0;white-space:pre-wrap;word-break:break-word;font:12px/1.48 var(--mono);color:var(--ink-dim);user-select:text;-webkit-user-select:text}
+  /* GPU-only micro-motions to smooth public-network latency perception */
+  @keyframes wtSlideUp{from{opacity:0;transform:translate3d(0,6px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
+  @keyframes wtSlideDown{from{opacity:0;transform:translate3d(0,-5px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
+  @keyframes wtSoftReveal{from{opacity:.35;transform:translate3d(0,2px,0)}to{opacity:1;transform:translate3d(0,0,0)}}
+  @keyframes wtBarSweep{0%{transform:translate3d(-100%,0,0)}100%{transform:translate3d(320%,0,0)}}
+  @keyframes wtBtnPulse{0%,100%{opacity:.58}50%{opacity:.92}}
+  @keyframes wtSkelPulse{0%,100%{opacity:.34}50%{opacity:.68}}
+  .hist-bar{position:relative;overflow:hidden}
+  .hist-bar::after{content:"";position:absolute;left:0;bottom:0;height:2px;width:32%;background:linear-gradient(90deg,transparent,var(--accent),var(--accent2),transparent);opacity:0;pointer-events:none;will-change:transform,opacity;transition:opacity .18s ease}
+  .pane-hist[data-task="running"] .hist-bar::after,
+  .pane-hist.busy .hist-bar::after{opacity:.9;animation:wtBarSweep 1.35s cubic-bezier(.4,0,.2,1) infinite}
+  .hist-native:not([hidden]),.hist-slash-out:not([hidden]){animation:wtSlideUp .18s cubic-bezier(.22,1,.36,1) both}
+  .hist-ac.open{animation:wtSlideUp .15s cubic-bezier(.22,1,.36,1) both}
+  .hist-older-list{animation:wtSlideDown .16s cubic-bezier(.22,1,.36,1) both}
+  .sel-pop.open{animation:wtSlideUp .14s cubic-bezier(.22,1,.36,1) both}
+  .hist-jump:not([hidden]){animation:wtSlideUp .16s cubic-bezier(.22,1,.36,1) both}
+  .hist-btn:active,.hist-ctl:active,.hist-send:active,.hist-native button:active,.hist-jump:active{transform:scale(.965)}
+  .hist-send:disabled,.hist-native button:disabled{animation:wtBtnPulse 1.1s ease-in-out infinite}
+  .hist-pending-send{position:absolute;left:12px;right:12px;bottom:8px;z-index:4;pointer-events:none;padding:7px 11px;border-radius:5px;border:1px solid rgba(238,152,51,.36);border-left:2px solid var(--accent);background:rgba(16,15,14,.92);color:var(--ink-dim);font:12.5px/1.45 var(--mono);display:flex;align-items:center;gap:8px;overflow:hidden;box-shadow:0 6px 20px rgba(0,0,0,.42);animation:wtSlideUp .16s cubic-bezier(.22,1,.36,1) both}
+  .hist-pending-send[hidden]{display:none}
+  .hist-pending-send::after{content:"";position:absolute;left:0;bottom:0;height:1.5px;width:36%;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:wtBarSweep 1.15s ease-in-out infinite}
+  .hist-pending-badge{flex:0 0 auto;font:600 10.5px/1 var(--ui);color:var(--accent);padding:2px 6px;border-radius:999px;background:rgba(238,152,51,.14)}
+  .hist-pending-txt{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hist-skel{padding:14px 4px;display:flex;flex-direction:column;gap:10px}
+  .hist-skel-bar{height:12px;border-radius:4px;background:rgba(241,236,227,.10);animation:wtSkelPulse 1.2s ease-in-out infinite}
+  .hist-skel-bar.s1{width:54%;height:14px}
+  .hist-skel-bar.s2{width:88%;animation-delay:.12s}
+  .hist-skel-bar.s3{width:72%;animation-delay:.24s}
   .hist-live{flex:0 0 auto;min-width:0;max-height:min(32vh,220px);overflow-y:auto;border-top:1px solid var(--line-soft);background:rgba(10,10,12,.72)}
   .hist-live:not([open]){display:none}
   .pane-hist.compact .hist-live[open]{max-height:118px}
@@ -382,7 +451,8 @@
   .hist-terminal-keys{display:flex;align-items:center;gap:6px;padding:6px 12px;flex-wrap:wrap}
   .hist-terminal-keys span{font-size:11px;color:var(--muted);margin-right:auto}
   .hist-terminal-keys button{min-width:36px;min-height:34px;border:1px solid var(--line);border-radius:5px;background:rgba(241,236,227,.04);color:var(--ink);cursor:pointer}
-  .hist-jump{position:absolute;right:18px;bottom:154px;z-index:3;padding:8px 12px;border:1px solid var(--accent);border-radius:18px;background:#191712;color:var(--ink);cursor:pointer}
+  .hist-jump-anchor{position:relative;flex:0 0 auto;z-index:3}
+  .hist-jump{position:absolute;right:14px;bottom:8px;z-index:3;padding:8px 12px;border:1px solid var(--accent);border-radius:18px;background:#191712;color:var(--ink);cursor:pointer}
   .hist-jump[hidden]{display:none}
   .pane{container-type:inline-size}
   @container (max-width:720px){
@@ -400,6 +470,8 @@
   #mobile-keybar .mk-sep{width:1px;height:22px;background:var(--line);flex:0 0 auto;margin:0 1px}
   body.wall-peek #mobile-keybar{display:none!important}
   @media (max-width:820px), (hover:none) and (pointer:coarse){
+    .hist-input,.hist-search{font-size:16px}
+    .hist-ctl.hist-arrow{display:inline-block;min-width:38px;min-height:38px;font-size:16px}
     #bar{height:auto;min-height:44px;gap:4px;padding:env(safe-area-inset-top) max(6px,env(safe-area-inset-right)) 0 max(6px,env(safe-area-inset-left))}
     #bar .sf-mark,#bar .sep{display:none}
     #bar .icon-btn,#quota-pill,.tab{height:38px}
@@ -408,13 +480,21 @@
     .tab .x{width:24px;height:32px;font-size:16px}
     #add{width:32px}
     #mobile-keybar{display:flex}
-    .hist-compose{padding-bottom:6px}
+    #app:has(.pane.focused.hist-active) #mobile-keybar,
+    #app:has(.pane.focused.hist-active) #upload-btn{display:none}
+    #app:not(:has(.pane.focused.hist-active)) .hist-compose{padding-bottom:6px}
   }
   @media (max-width:480px){
     #bar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}
     #acts{grid-column:1 / -1;justify-content:space-between;border-top:1px solid var(--line-soft)}
     #acts .icon-btn{width:38px;height:36px}
     #quota-pop{top:calc(42px + env(safe-area-inset-top))}
+  }
+
+  @media (max-width:480px){
+    html.wt-public-fold #paste,html.wt-public-fold #upload-btn{display:none}
+    html.wt-public-fold #bar:not(:has(#mobile-pane-select:not([hidden]))){display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 6px}
+    html.wt-public-fold #bar:not(:has(#mobile-pane-select:not([hidden]))) #acts{grid-column:auto;border-top:0}
   }
 
 </style>
@@ -446,6 +526,7 @@
     <div class="sep"></div>
 
     <div id="acts">
+      <select id="mobile-pane-select" aria-label="切换终端窗格" hidden></select>
       <button id="split-h" class="icon-btn" title="左右分屏 (Option+D)">
         <svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.8"/><path d="M8 2.5v11"/></svg>
       </button>
@@ -515,10 +596,71 @@ const IS_LOCAL_HOST = !HOST || HOST === 'localhost' || HOST === '127.0.0.1' || H
 const FOLD_ONLY_PUBLIC = !IS_LOCAL_HOST || new URLSearchParams(location.search).get('public') === '1';
 if (FOLD_ONLY_PUBLIC) document.documentElement.classList.add('wt-public-fold');
 
+// Dynamic network & performance governor: adapts SSE cadence, polling intervals,
+// and GPU blur effects in real time based on measured RTT and failure rate.
+const wtNet = (() => {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  let ewmaRtt = FOLD_ONLY_PUBLIC ? 260 : 30;
+  let failStreak = 0;
+  let tier = FOLD_ONLY_PUBLIC ? 'wan' : 'fast';
+  let tierChangedAt = 0;
+  const applyTier = () => {
+    const slowLink = conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g' || conn.effectiveType === '3g');
+    let next = tier;
+    if (failStreak >= 2 || ewmaRtt >= 460 || slowLink) next = 'slow';
+    else if (FOLD_ONLY_PUBLIC || ewmaRtt >= 140 || (tier === 'slow' && ewmaRtt >= 320)) next = 'wan';
+    else if (ewmaRtt <= 95 && failStreak === 0) next = 'fast';
+    if (next !== tier) {
+      tier = next;
+      tierChangedAt = Date.now();
+    }
+    document.documentElement.classList.toggle('wt-perf-lite', tier !== 'fast' || FOLD_ONLY_PUBLIC);
+  };
+  applyTier();
+  try { conn && conn.addEventListener && conn.addEventListener('change', applyTier); } catch (e) {}
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const track = /^\/(?:history|screen|send|session-cmds|sys)(?:\?|$)/.test(url);
+    if (!track) return nativeFetch(input, init);
+    const t0 = performance.now();
+    return nativeFetch(input, init).then(res => {
+      const dt = Math.max(1, performance.now() - t0);
+      if (res.ok) {
+        failStreak = 0;
+        ewmaRtt = ewmaRtt * 0.72 + dt * 0.28;
+      } else if (res.status >= 500) {
+        failStreak = Math.min(failStreak + 1, 5);
+      }
+      applyTier();
+      return res;
+    }, err => {
+      if (!err || err.name !== 'AbortError') {
+        failStreak = Math.min(failStreak + 1, 5);
+        ewmaRtt = Math.min(2000, ewmaRtt * 0.6 + 650 * 0.4);
+        applyTier();
+      }
+      throw err;
+    });
+  };
+  return {
+    get tier() { return tier; },
+    get rtt() { return Math.round(ewmaRtt); },
+    modeSettled: () => Date.now() - tierChangedAt >= 4000,
+    sseMode: () => tier === 'slow' ? 'slow' : (tier === 'wan' ? 'wan' : 'lan'),
+    screenMs: () => tier === 'slow' ? 7000 : (tier === 'wan' ? 4000 : 2000),
+    foldPollMs: () => tier === 'slow' ? 5000 : (tier === 'wan' ? 2500 : 800),
+    sysMs: () => tier === 'slow' ? 30000 : (tier === 'wan' ? 15000 : 5000),
+    streamTimeoutMs: () => tier === 'slow' ? 32000 : (tier === 'wan' ? 22000 : 12000)
+  };
+})();
+
 const STATE_KEY = 'wt_state_v1';
 const stageEl = document.getElementById('stage');
 const listEl = document.getElementById('tablist');
 const touchPrimary = matchMedia('(pointer:coarse)');
+const singlePaneMedia = matchMedia('(max-width:600px), (pointer:coarse) and (max-height:600px)');
+const mobilePaneSelect = document.getElementById('mobile-pane-select');
 const toastEl = document.getElementById('toast');
 const closePaneBtn = document.getElementById('close-pane');
 const histBtn = document.getElementById('hist-btn');
@@ -614,7 +756,26 @@ function ensureFrame(paneEl){
   paneEl.appendChild(f);
 }
 
-function updateTerminalConnection(paneEl){
+let pageSuspended = false;
+let backgroundSince = null;
+let resumeTimer = 0;
+
+function isWebtermPaused(){
+  return pageSuspended || document.hidden || navigator.onLine === false;
+}
+
+function reconnectTerminalFrame(paneEl, frame, attempts){
+  const now = Date.now();
+  frame.dataset.connectSince = String(now);
+  frame.dataset.autoRetries = String(attempts);
+  delete frame.dataset.resumeOnReveal;
+  const box = paneEl.querySelector('.term-connection');
+  if (box) box.hidden = true;
+  frame.src = '/tty/?arg=' + encodeURIComponent(paneEl.dataset.sess) + '&retry=' + now;
+}
+
+function updateTerminalConnection(paneEl, resumed = false, longPause = false){
+  if (isWebtermPaused()) return;
   const frame = paneEl.querySelector('iframe');
   if (!frame || !paneEl.classList.contains('on')) return;
   let ready = false;
@@ -625,39 +786,47 @@ function updateTerminalConnection(paneEl){
     closed = !!ws && ws.readyState >= 2;
   } catch(e) {}
   let box = paneEl.querySelector('.term-connection');
+  if (longPause && ready) frame.dataset.resumeOnReveal = '1';
+  if (frame.dataset.resumeOnReveal === '1' && !paneEl.classList.contains('hist-active')) {
+    reconnectTerminalFrame(paneEl, frame, 0);
+    return;
+  }
   if (ready) {
     frame.dataset.connectSince = String(Date.now());
     frame.dataset.autoRetries = '0';
     if (box) box.hidden = true;
     return;
   }
+  if (resumed) frame.dataset.autoRetries = '0';
+  if (FOLD_ONLY_PUBLIC && paneEl.classList.contains('hist-active')) {
+    const hs = paneHistState.get(paneEl);
+    if (hs && hs.data && hs.es && hs.es.readyState !== 2) return;
+  }
   const retries = Number(frame.dataset.autoRetries || '0');
-  const since = Number(frame.dataset.connectSince || '0');
-  if (closed && retries < 4 && Date.now() - since >= 1200) {
-    frame.dataset.autoRetries = String(retries + 1);
-    frame.dataset.connectSince = String(Date.now());
-    if (box) box.hidden = true;
-    frame.src = '/tty/?arg=' + encodeURIComponent(paneEl.dataset.sess) + '&retry=' + Date.now();
+  const elapsed = Date.now() - Number(frame.dataset.connectSince || '0');
+  if (retries < 4 && ((closed && elapsed >= 1200) || (resumed && elapsed >= 10000))) {
+    reconnectTerminalFrame(paneEl, frame, retries + 1);
     return;
   }
-  if (Date.now() - since < 10000) return;
+  if (elapsed < 10000) return;
   if (!box) {
     box = document.createElement('div'); box.className = 'term-connection'; box.setAttribute('role','status');
     box.innerHTML = '<p>终端尚未连接。可以重新连接，或尝试折叠对话。</p><button type="button" data-connect="retry">重新连接</button> <button type="button" data-connect="fold">折叠对话</button>';
     box.addEventListener('click', e => {
       const action = e.target.closest('[data-connect]')?.dataset.connect;
-      if (action === 'retry') { frame.dataset.connectSince = String(Date.now()); frame.dataset.autoRetries = '0'; box.hidden = true; frame.src = '/tty/?arg=' + encodeURIComponent(paneEl.dataset.sess) + '&retry=' + Date.now(); }
+      if (action === 'retry') reconnectTerminalFrame(paneEl, frame, 0);
       if (action === 'fold') { openHistoryOverlay(paneEl); const hs = paneHistState.get(paneEl); if (hs) hs.liveEl.open = true; }
     });
     paneEl.appendChild(box);
   }
   box.hidden = false;
 }
-setInterval(() => { if (!document.hidden) for (const pane of paneEls.values()) updateTerminalConnection(pane); }, 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) for (const pane of paneEls.values()) updateTerminalConnection(pane); });
-window.addEventListener('pageshow', () => { for (const pane of paneEls.values()) updateTerminalConnection(pane); });
+setInterval(() => {
+  if (!isWebtermPaused()) for (const pane of paneEls.values()) updateTerminalConnection(pane);
+}, 1000);
 
 function dropFrame(paneEl){
+  paneEl?.querySelector('.term-connection')?.remove();
   const f = paneEl && paneEl.querySelector('iframe');
   if (f) {
     try { f.src = 'about:blank'; } catch (e) {}
@@ -682,7 +851,9 @@ function focusPaneById(paneId, tries = 0){
   if (touchPrimary.matches) return;
   if (!active || active.activePaneId !== paneId) return;
   const el = paneEls.get(paneId);
-  if (!el || !el.classList.contains('on')) return;
+  if (!el || !el.classList.contains('on') || isWebtermPaused()) return;
+  if (tries && (el.classList.contains('hist-active') ||
+      (document.activeElement !== document.body && document.activeElement !== el.querySelector('iframe')))) return;
   if (el.classList.contains('hist-active')) {
     const hi = el.querySelector('.pane-hist.open .hist-input');
     if (hi) { hi.focus({ preventScroll: true }); return; }
@@ -702,6 +873,7 @@ function focusPaneById(paneId, tries = 0){
 
 function setPaneFocus(paneId, doFocus = true){
   if (!paneId) return;
+  if (singlePaneMedia.matches && paneId !== active?.activePaneId) return;
   const owner = tabs.find(t => findLeaf(t.root, paneId));
   if (owner && owner === active) {
     owner.activePaneId = paneId;
@@ -784,7 +956,11 @@ function hookFrame(f, paneEl){
     e.preventDefault(); e.stopPropagation();
     await uploadFiles(files, paneEl);
   }, true);
-  if (paneEl.classList.contains('on') && active && paneId === active.activePaneId && !paneEl.classList.contains('hist-active')) focusPaneById(paneId);
+  const currentFocus = document.activeElement;
+  if (!isWebtermPaused() && (currentFocus === f || currentFocus === document.body) &&
+      paneEl.classList.contains('on') && active && paneId === active.activePaneId && !paneEl.classList.contains('hist-active')) {
+    focusPaneById(paneId);
+  }
 }
 
 async function upload(blob, paneEl){
@@ -867,14 +1043,16 @@ async function uploadFiles(fileList, paneEl){
 }
 
 async function pasteFromClipboard(){
+  const target = getFocusedPaneEl();
+  if (!target) { toast('当前没有活动窗格'); return; }
   try {
     const items = await navigator.clipboard.read();
     for (const it of items) {
       const t = it.types.find(x => x.startsWith('image/'));
       if (t) {
         const blob = await it.getType(t);
-        const target = getFocusedPaneEl() || [...paneEls.values()].find(p => p.classList.contains('on'));
-        if (target) return upload(blob, target);
+        if (!target.isConnected) { toast('原终端窗格已关闭'); return; }
+        return upload(blob, target);
       }
     }
     toast('剪贴板里没有图片');
@@ -908,7 +1086,8 @@ function applyLayout(){
   if (!active) return;
 
   const rects = [], handles = [];
-  computeLayout(active.root, { x: 0, y: 0, w: 100, h: 100 }, rects, handles);
+  const root = singlePaneMedia.matches ? findLeaf(active.root, active.activePaneId) : active.root;
+  computeLayout(root, { x: 0, y: 0, w: 100, h: 100 }, rects, handles);
   stageEl.classList.toggle('multi', rects.length > 1);
   closePaneBtn.disabled = rects.length <= 1;
 
@@ -1024,6 +1203,8 @@ function startDrag(e, h, handleEl){
 }
 
 function render(){
+  const singlePane = singlePaneMedia.matches;
+  document.documentElement.classList.toggle('single-pane', singlePane);
   listEl.innerHTML = '';
   tabs.forEach(t => {
     const el = document.createElement('div');
@@ -1034,7 +1215,10 @@ function render(){
     el.append(dot, nameEl, xEl);
     el.onclick = e => {
       if (e.target === xEl) closeTab(t);
-      else { active = t; render(); focusActive(); }
+      else {
+        if (active !== t) { active = t; render(); }
+        focusActive();
+      }
     };
     el.ondblclick = e => {
       if (e.target === xEl) return;
@@ -1059,20 +1243,36 @@ function render(){
   if (active) warmTabs.add(active);
 
   const activeLeaves = active ? listLeaves(active.root) : [];
-  const activeIds = new Set(activeLeaves.map(l => l.id));
-  if (active && !activeIds.has(active.activePaneId) && activeLeaves.length) {
+  if (activeLeaves.length && !activeLeaves.some(leaf => leaf.id === active.activePaneId)) {
     active.activePaneId = activeLeaves[0].id;
   }
 
+  mobilePaneSelect.hidden = !singlePane || activeLeaves.length <= 1;
+  if (!mobilePaneSelect.hidden) {
+    mobilePaneSelect.replaceChildren(...activeLeaves.map((leaf, index) =>
+      new Option('窗格 ' + (index + 1), leaf.id)
+    ));
+    mobilePaneSelect.value = active.activePaneId;
+  }
+
+  const revealedOverlays = [];
   for (const t of tabs) {
     const keepWarm = warmTabs.has(t);
     for (const leaf of listLeaves(t.root)) {
       const el = getPaneEl(leaf);
-      const on = (t === active) && activeIds.has(leaf.id);
+      const wasOn = el.classList.contains('on');
+      const on = t === active && (!singlePane || leaf.id === active.activePaneId);
+      if (wasOn && !on) {
+        const st = paneHistState.get(el);
+        if (st && st.listEl && st.root.classList.contains('open')) {
+          st.savedScrollTop = st.listEl.scrollTop;
+        }
+      }
       el.classList.toggle('on', on);
       if (on) {
         ensureFrame(el);
         checkAutoFoldNow(el);
+        if (!wasOn) revealedOverlays.push(el);
       } else if (!keepWarm) {
         dropFrame(el);
       }
@@ -1080,6 +1280,16 @@ function render(){
   }
 
   applyLayout();
+  for (const el of revealedOverlays) {
+    const st = paneHistState.get(el);
+    if (st && st.root.classList.contains('open')) {
+      if (st.stickToBottom) setHistScrollTop(st, st.listEl.scrollHeight);
+      else if (st.savedScrollTop != null) st.listEl.scrollTop = st.savedScrollTop;
+      syncHistJump(st);
+      st.nextScreenStatusAt = 0;
+      st.refreshLive();
+    }
+  }
   syncFocusClasses();
   syncHistStreams();
   saveState();
@@ -1118,7 +1328,7 @@ function closeTab(t){
       paneEls.delete(leaf.id);
     }
     try { sessionStorage.removeItem(DRAFT_PREFIX + leaf.sess); } catch (e) {}
-    fetch('/close?s=' + encodeURIComponent(leaf.sess)).catch(() => {});
+    fetch('/close?s=' + encodeURIComponent(leaf.sess), { method: 'POST', keepalive: true }).catch(() => {});
   }
   tabs = tabs.filter(x => x !== t);
   if (active === t) active = tabs[tabs.length - 1] || null;
@@ -1127,7 +1337,7 @@ function closeTab(t){
 }
 
 function splitPane(dir){
-  if (!active || !active.activePaneId) return;
+  if (singlePaneMedia.matches || !active || !active.activePaneId) return;
   const curLeaf = findLeaf(active.root, active.activePaneId);
   if (!curLeaf) return;
   const newLeaf = mkLeaf(active.id);
@@ -1144,7 +1354,7 @@ function splitPane(dir){
 }
 
 function closeActivePane(){
-  if (!active || !active.activePaneId) return;
+  if (singlePaneMedia.matches || !active || !active.activePaneId) return;
   const leaves = listLeaves(active.root);
   if (leaves.length <= 1) return;
   const victimId = active.activePaneId;
@@ -1163,7 +1373,7 @@ function closeActivePane(){
     paneEls.delete(victimId);
   }
   try { sessionStorage.removeItem(DRAFT_PREFIX + victimLeaf.sess); } catch (e) {}
-  fetch('/close?s=' + encodeURIComponent(victimLeaf.sess)).catch(() => {});
+  fetch('/close?s=' + encodeURIComponent(victimLeaf.sess), { method: 'POST', keepalive: true }).catch(() => {});
 
   active.root = nextRoot;
   const remain = listLeaves(active.root);
@@ -1240,43 +1450,87 @@ function moveFocus(dirName){
 
 window.wtNotifyCopy = len => toast('已复制 ' + len + ' 字');
 
-function copyTextTop(txt){
-  txt = String(txt || '').replace(/[ \t]+(?=\r?\n|$)/g, '');
-  if (!txt) return false;
-  let ok = false;
+function copyViaTextarea(txt, doc = document){
+  const prevActive = doc.activeElement;
+  const ta = doc.createElement('textarea');
   try {
-    const ta = document.createElement('textarea');
     ta.value = txt;
-    ta.setAttribute('readonly', '');
-    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
-    document.body.appendChild(ta);
+    ta.readOnly = true;
+    ta.tabIndex = -1;
+    ta.setAttribute('aria-hidden', 'true');
+    ta.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;padding:0;border:0;opacity:0;font-size:16px';
+    doc.body.appendChild(ta);
     ta.focus({ preventScroll: true });
     ta.select();
     ta.setSelectionRange(0, txt.length);
-    ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-  } catch (e) {}
-  try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).catch(() => {}); } catch (e) {}
-  if (ok) toast('已复制 ' + txt.length + ' 字');
-  return ok;
+    return Boolean(doc.execCommand('copy'));
+  } catch (e) {
+    return false;
+  } finally {
+    ta.remove();
+    if (prevActive && prevActive !== doc.body && typeof prevActive.focus === 'function') {
+      try { prevActive.focus({ preventScroll: true }); } catch (e) {}
+    }
+  }
+}
+
+function copyTextTop(txt, doc = document){
+  txt = String(txt || '').replace(/[ \t]+(?=\r?\n|$)/g, '');
+  if (!txt) return false;
+  const notify = () => toast('已复制 ' + txt.length + ' 字');
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(txt).then(notify, () => {
+      if (copyViaTextarea(txt, doc)) notify();
+      else toast('复制失败，请使用系统复制');
+    });
+    return true;
+  }
+  let copied = false;
+  const onCopy = e => {
+    if (!e.clipboardData) return;
+    e.clipboardData.setData('text/plain', txt);
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    copied = true;
+  };
+  // The LAN page uses HTTP. Writing via the copy event keeps the focused
+  // textarea and the on-screen keyboard in place without the Clipboard API.
+  doc.addEventListener('copy', onCopy, true);
+  try {
+    doc.execCommand('copy');
+  } catch (e) {
+  } finally {
+    doc.removeEventListener('copy', onCopy, true);
+  }
+  if (copied) {
+    notify();
+    return true;
+  }
+  if (copyViaTextarea(txt, doc)) {
+    notify();
+    return true;
+  }
+  return false;
 }
 
 function copyActiveSelection(){
   if (!active || !active.activePaneId) return false;
-  const pEl = active.paneMap && active.paneMap.get(active.activePaneId);
+  const pEl = getFocusedPaneEl();
   const f = pEl && pEl.querySelector('iframe');
   try {
     const win = f && f.contentWindow;
     const t = win && win.term;
     if (t && t.hasSelection && t.hasSelection()) {
       const txt = t.getSelection();
-      if (txt) return copyTextTop(txt);
+      if (txt) return copyTextTop(txt, win.document);
     }
   } catch (e) {}
   return false;
 }
 
 function navKey(e){
+  if (e.isComposing || e.keyCode === 229 ||
+      (e.target?.classList?.contains('hist-input') && paneHistState.get(getFocusedPaneEl())?.composing)) return;
   const isC = (e.code === 'KeyC' || (e.key && e.key.toLowerCase() === 'c'));
   if (((e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) || (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey)) && isC) {
     if (copyActiveSelection()) {
@@ -1292,19 +1546,19 @@ function navKey(e){
     moveFocus(dir);
     return;
   }
-  if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyD') {
+  if (!singlePaneMedia.matches && e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyD') {
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     splitPane(e.shiftKey ? 'v' : 'h');
     return;
   }
-  if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyW') {
+  if (!singlePaneMedia.matches && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyW') {
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     closeActivePane();
     return;
   }
   if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyH') {
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    toggleHistoryOverlay();
+    if (!e.repeat) toggleHistoryOverlay();
     return;
   }
   if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.code === 'KeyM' || e.key === 'µ' || e.key === 'm' || e.key === 'M')) {
@@ -1312,10 +1566,11 @@ function navKey(e){
     const box = pEl && pEl.querySelector('.pane-hist.open');
     if (box) {
       e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      const stM = paneHistState.get(pEl);
-      if (stM) stM.blockAltMuUntil = Date.now() + 140;
-      if (stM && document.activeElement === stM.inputEl && typeof stM.triggerAltM === 'function') stM.triggerAltM();
-      else if (pEl.dataset.sess) { sendRawToPane(pEl, '\x1bm').then(ok => { if (ok) toast('已发送 Alt+M'); setTimeout(() => pokeHistStream(pEl.dataset.sess), 25); }); }
+      const st = paneHistState.get(pEl);
+      if (st) {
+        st.blockAltMuUntil = Date.now() + 140;
+        if (!e.repeat) st.triggerAltM(document.activeElement === st.inputEl);
+      }
       return;
     }
   }
@@ -1422,6 +1677,10 @@ function chipHtml(label, val, lvl){
   return `<span class="qchip"><span class="qdot ${lvl}"></span>${label} ${val}</span>`;
 }
 
+function escapeHtml(value){
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
+}
+
 function renderSys(data){
   if (!data || !data.cpu || !data.mem) return;
   const cpuPct = Number(data.cpu.pct || 0);
@@ -1431,7 +1690,7 @@ function renderSys(data){
   const chips = [
     chipHtml('CPU', `${cpuPct}%`, sysLevel(cpuPct, 65, 88)),
     tempC != null ? chipHtml('温度', `${tempC}°C`, sysLevel(tempC, 72, 85)) : '',
-    chipHtml('内存', `${data.mem.usedGB}/${data.mem.totalGB}G (${memPct}%)`, sysLevel(memPct, 75, 90)),
+    chipHtml('内存', `${escapeHtml(data.mem.usedGB)}/${escapeHtml(data.mem.totalGB)}G (${memPct}%)`, sysLevel(memPct, 75, 90)),
   ].filter(Boolean);
   qSummary.innerHTML = chips.join('<span class="qsep"> · </span>');
   if (qMobileLbl) {
@@ -1445,12 +1704,12 @@ function renderSys(data){
   const memLvl = sysLevel(memPct, 75, 90);
   const tempLvl = tempC != null ? sysLevel(tempC, 72, 85) : 'ok';
   const tempRows = Array.isArray(data.temps) && data.temps.length
-    ? data.temps.map(x => `<div class="qrow-reset">${x.name}: ${x.c}°C</div>`).join('')
+    ? data.temps.map(x => `<div class="qrow-reset">${escapeHtml(x.name)}: ${escapeHtml(x.c)}°C</div>`).join('')
     : '<div class="qrow-reset">无传感器读数</div>';
 
   qCards.innerHTML = `
     <div class="qcard">
-      <div class="qcard-top"><span class="qcard-name">CPU 占用</span><span class="qcard-plan">${data.cpu.freqMhz ? data.cpu.freqMhz + ' MHz' : ''}</span></div>
+      <div class="qcard-top"><span class="qcard-name">CPU 占用</span><span class="qcard-plan">${data.cpu.freqMhz ? escapeHtml(data.cpu.freqMhz) + ' MHz' : ''}</span></div>
       <div class="qrow">
         <div class="qrow-line"><span class="qrow-lbl">总占用</span><span class="qrow-val">${cpuPct}%</span></div>
         <div class="qbar"><i class="${cpuLvl}" style="width:${Math.max(2, Math.min(100, cpuPct))}%"></i></div>
@@ -1467,7 +1726,7 @@ function renderSys(data){
     <div class="qcard">
       <div class="qcard-top"><span class="qcard-name">内存占用</span><span class="qcard-plan">${memPct}%</span></div>
       <div class="qrow">
-        <div class="qrow-line"><span class="qrow-lbl">物理内存</span><span class="qrow-val">${data.mem.usedGB} / ${data.mem.totalGB} GB</span></div>
+        <div class="qrow-line"><span class="qrow-lbl">物理内存</span><span class="qrow-val">${escapeHtml(data.mem.usedGB)} / ${escapeHtml(data.mem.totalGB)} GB</span></div>
         <div class="qbar"><i class="${memLvl}" style="width:${Math.max(2, Math.min(100, memPct))}%"></i></div>
       </div>
     </div>
@@ -1546,12 +1805,17 @@ function terminalTaskState(agent, screen){
   const lines = String(screen.text || '').replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, '').trimEnd().split('\n');
   const tail = lines.slice(-12).join('\n');
   if (agent === 'codex') {
-    if (/^\s*[•●✳\u2800-\u28ff]\s+Working\s*\([^\n)]*esc to interrupt[^\n)]*\)/im.test(tail)) return 'running';
+    if (/\besc to interrupt\b/i.test(tail)) return 'running';
     if (lines.slice(-5).some(line => /^\s*›(?:[ \t]|$)/.test(line))) return 'input';
   }
   if (agent === 'agy') {
-    if (/^\s*esc to cancel(?:[ \t]{2,}[^\n]+)?[ \t]*$/im.test(tail)) return 'running';
+    if (/\besc to cancel\b/i.test(tail) || /^[\u2801-\u28ff]\s+\S/m.test(lines.slice(-6).join('\n'))) return 'running';
     if (/^\s*\? for shortcuts(?:[ \t]{2,}[^\n]+)?[ \t]*$/im.test(tail)) return 'input';
+    if (/^─{12,}\n>\s*\n─{12,}/m.test(tail)) return 'input';
+  }
+  if (agent === 'claude') {
+    if (/\besc to interrupt\b/i.test(tail)) return 'running';
+    if (lines.slice(-5).some(line => /^\s*❯(?:[ \t]|$)/.test(line))) return 'input';
   }
   return '';
 }
@@ -1592,9 +1856,8 @@ function formatAnsiFg(color){
 }
 
 function applySgrParams(paramsStr, state){
-  const parts = paramsStr === '' ? [0] : paramsStr.split(/[;:]/).map(x => x === '' ? 0 : parseInt(x, 10));
-  for (let i = 0; i < parts.length; i++) {
-    const c = parts[i];
+  const tokens = paramsStr === '' ? ['0'] : paramsStr.split(';');
+  const applyBasic = (c) => {
     if (Number.isNaN(c) || c === 0) {
       state.fg = null; state.bg = null; state.bold = false; state.dim = false; state.italic = false; state.under = false; state.strike = false; state.inv = false;
     } else if (c === 1) state.bold = true;
@@ -1614,34 +1877,54 @@ function applySgrParams(paramsStr, state){
     else if (c >= 40 && c <= 47) state.bg = TOKYO_BASE[c - 40];
     else if (c === 49) state.bg = null;
     else if (c >= 100 && c <= 107) state.bg = TOKYO_BRIGHT[c - 100];
-    else if ((c === 38 || c === 48) && i + 1 < parts.length) {
-      const mode = parts[i + 1];
-      if (mode === 5 && i + 2 < parts.length) {
-        const col = xterm256ToRgb(parts[i + 2]);
+  };
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.includes(':')) {
+      const sub = tok.split(':').map(x => x === '' ? 0 : parseInt(x, 10));
+      const c = sub[0];
+      if (c === 4) {
+        state.under = sub[1] !== 0;
+      } else if ((c === 38 || c === 48) && sub.length >= 2) {
+        const mode = sub[1];
+        if (mode === 5 && sub.length >= 3) {
+          const col = xterm256ToRgb(sub[2]);
+          if (c === 38) state.fg = col; else state.bg = col;
+        } else if (mode === 2 && sub.length >= 5) {
+          const off = sub.length >= 6 ? 3 : 2;
+          const rgb = [sub[off] & 255, sub[off + 1] & 255, sub[off + 2] & 255];
+          if (c === 38) state.fg = rgb; else state.bg = rgb;
+        }
+      } else {
+        applyBasic(c);
+      }
+      continue;
+    }
+    const c = tok === '' ? 0 : parseInt(tok, 10);
+    if ((c === 38 || c === 48) && i + 1 < tokens.length) {
+      const mode = parseInt(tokens[i + 1], 10);
+      if (mode === 5 && i + 2 < tokens.length) {
+        const col = xterm256ToRgb(parseInt(tokens[i + 2], 10));
         if (c === 38) state.fg = col; else state.bg = col;
         i += 2;
-      } else if (mode === 2 && i + 4 < parts.length) {
-        const rgb = [parts[i + 2] & 255, parts[i + 3] & 255, parts[i + 4] & 255];
+        continue;
+      } else if (mode === 2 && i + 4 < tokens.length) {
+        const rgb = [parseInt(tokens[i + 2], 10) & 255, parseInt(tokens[i + 3], 10) & 255, parseInt(tokens[i + 4], 10) & 255];
         if (c === 38) state.fg = rgb; else state.bg = rgb;
         i += 4;
+        continue;
       }
     }
+    applyBasic(c);
   }
 }
 
-const SPINNER_GLYPH_RE = /[\u2801-\u28ff◐◓◑◒◴◵◶◷]/g;
 const LEADING_SPIN_RE = /^([ \t]*)(?:([\u2801-\u28ff◐◓◑◒◴◵◶◷])([ \t]+)|([✳✶✻✽✢])([ \t]+(?=\S+(?:ing\b|…)))|(•)([ \t]+(?=Working\s*\()))/;
 
 function matchLeadingSpin(line){
   const m = String(line || '').match(LEADING_SPIN_RE);
   if (!m) return null;
   return { indent: m[1] || '', glyph: m[2] || m[4] || m[6] || '', gap: m[3] || m[5] || m[7] || '', len: m[0].length };
-}
-
-function normalizeSpinners(s){
-  return String(s || '')
-    .replace(SPINNER_GLYPH_RE, '⠋')
-    .replace(/[✳✶✻✽✢](?=[ \t]+\S+(?:ing\b|…))/g, '✳');
 }
 
 function makeSpinNode(){
@@ -1764,6 +2047,14 @@ function decomposeReplyBlocks(turn, st, key){
 
   const totalLines = plainLines.length;
   const limit = HIST_FOLD_OVER_LINES;
+  if (!st.seenTurnLines) st.seenTurnLines = new Map();
+  const prevSeenLines = st.seenTurnLines.get(key);
+  // If the user was already watching this turn stream below the fold limit,
+  // do not suddenly collapse the middle out from under them when it crosses 120 lines.
+  if (prevSeenLines !== undefined && prevSeenLines <= limit && totalLines > limit) {
+    st.openLongTurns.add(key);
+  }
+  st.seenTurnLines.set(key, totalLines);
   const isFolded = totalLines > limit && !st.openLongTurns.has(key);
   const isExpandedLong = totalLines > limit && st.openLongTurns.has(key);
   const truncatedCount = totalLines > limit ? (totalLines - 36) : 0;
@@ -1781,7 +2072,7 @@ function decomposeReplyBlocks(turn, st, key){
       blocks.push({
         type: 'text',
         bKey: key + '#t' + blocks.length,
-        sig: normalizeSpinners(a.join('\n')),
+        sig: a.join('\n'),
         plainLines: p,
         ansiLines: a
       });
@@ -1832,7 +2123,7 @@ function decomposeReplyBlocks(turn, st, key){
           type: 'step',
           bKey,
           stepOpen,
-          sig: (stepOpen ? '1:' : '0:') + normalizeSpinners(blockAnsi.join('\n')),
+          sig: (stepOpen ? '1:' : '0:') + blockAnsi.join('\n'),
           plainLines: blockPlain,
           ansiLines: blockAnsi
         });
@@ -1955,28 +2246,36 @@ function createOrUpdateBlockEl(block, oldEntry, st, key, paneEl){
   return { type: 'more', bKey: block.bKey, sig: block.sig, el: more };
 }
 
+function histDistanceFromBottom(st){
+  return st.listEl.scrollHeight - st.listEl.clientHeight - Math.max(0, st.listEl.scrollTop);
+}
+
+function histCanScroll(st){
+  return st.listEl.scrollHeight > st.listEl.clientHeight + 8;
+}
+
+function syncHistJump(st){
+  st.jumpEl.hidden = !histCanScroll(st) || (st.stickToBottom && histDistanceFromBottom(st) <= 8);
+}
+
+function setHistScrollTop(st, top){
+  const previousTop = st.listEl.scrollTop;
+  st.listEl.scrollTop = top;
+  if (previousTop !== st.listEl.scrollTop) st.appliedScrollTop = st.listEl.scrollTop;
+}
+
 function preserveHistScrollAround(paneEl, mutate, anchorEl){
   const st = paneHistState.get(paneEl);
   if (!st || !st.listEl) { mutate(); renderHistList(paneEl); return; }
   const keepTop = st.listEl.scrollTop;
-  const anchorBefore = anchorEl && anchorEl.isConnected ? anchorEl.getBoundingClientRect().top : null;
+  const anchorBefore = anchorEl?.isConnected ? anchorEl.getBoundingClientRect().top : null;
   st.suppressAutoScrollUntil = Date.now() + 320;
   mutate();
   renderHistList(paneEl);
-  let targetTop = keepTop;
-  if (anchorBefore !== null && anchorEl && anchorEl.isConnected) {
-    const anchorAfter = anchorEl.getBoundingClientRect().top;
-    targetTop = Math.max(0, keepTop + (anchorAfter - anchorBefore));
-  }
-  st.listEl.scrollTop = targetTop;
-  st.stickToBottom = (st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight) <= 8;
-  const jumpBtn = st.root && st.root.querySelector('.hist-jump');
-  if (jumpBtn) jumpBtn.hidden = st.stickToBottom;
-  requestAnimationFrame(() => {
-    st.listEl.scrollTop = targetTop;
-    st.stickToBottom = (st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight) <= 8;
-    if (jumpBtn) jumpBtn.hidden = st.stickToBottom;
-  });
+  const shift = anchorBefore !== null && anchorEl.isConnected ? anchorEl.getBoundingClientRect().top - anchorBefore : 0;
+  setHistScrollTop(st, keepTop + shift);
+  st.stickToBottom = histDistanceFromBottom(st) <= 8;
+  syncHistJump(st);
 }
 
 function patchReplyHost(hostEl, turn, st, key, paneEl, prevEntries){
@@ -2078,8 +2377,9 @@ function pokeHistStream(sess){
 
 function histSignature(d){
   if (!d) return '';
+  if (d.digest) return d.digest;
   // Include all visible content: equal-length edits and earlier turns can change too.
-  return normalizeSpinners(JSON.stringify([d.historySource, d.threadId, d.cmd, d.agent, d.runningAgent, d.menuActive, d.model, d.cwd, d.banner, d.bannerAnsi, d.preamble, d.preambleAnsi, d.totalLines, d.turns]));
+  return JSON.stringify([d.historySource, d.threadId, d.cmd, d.agent, d.runningAgent, d.menuActive, d.menuCloseKey, d.slashOutput, d.slashOutputAnsi, d.model, d.cwd, d.banner, d.bannerAnsi, d.preamble, d.preambleAnsi, d.totalLines, d.turns]);
 }
 
 const DRAFT_PREFIX = 'wt_draft_v1:';
@@ -2403,6 +2703,7 @@ function ensureHistOverlay(paneEl){
   root.innerHTML = [
     '<div class="hist-bar">',
       '<span class="hist-title">加载中…</span>',
+      '<span class="hist-model-pill" hidden></span>',
       '<span class="hist-status" role="status">连接中</span>',
       '<span class="hist-task-status" role="status" hidden></span>',
       '<input class="hist-search" aria-label="筛选 agent 对话" type="search" placeholder="筛选对话…" autocomplete="off" spellcheck="false">',
@@ -2415,10 +2716,12 @@ function ensureHistOverlay(paneEl){
     '<div class="hist-banner"></div>',
     '<div class="hist-older-host"></div>',
     '<div class="hist-list"></div>',
+    '<div class="hist-jump-anchor"><div class="hist-pending-send" role="status" hidden><span class="hist-pending-badge">发送中</span><span class="hist-pending-txt"></span></div><button type="button" class="hist-jump" hidden>↓ 最新内容</button></div>',
     '<div class="sel-pop" role="toolbar" aria-label="选中引用操作">',
       '<button type="button" class="sel-pop-btn quote" data-sel="quote">❝ 引用评论</button>',
       '<button type="button" class="sel-pop-btn" data-sel="copy">复制</button>',
     '</div>',
+    '<section class="hist-slash-out" aria-label="命令输出" hidden></section>',
     '<section class="hist-native" aria-label="Agent 功能菜单" hidden></section>',
     '<details class="hist-live"><summary>原终端实时画面（点击收起）</summary>',
       '<pre class="hist-live-screen" aria-label="当前终端画面">展开后读取当前终端…</pre>',
@@ -2432,7 +2735,6 @@ function ensureHistOverlay(paneEl){
         '<button type="button" data-terminal-key="enter">确认 ↵</button>',
       '</div>',
     '</details>',
-    '<button type="button" class="hist-jump" hidden>↓ 最新内容</button>',
     '<div class="hist-compose">',
       '<div class="hist-ac" role="listbox" aria-label="补全与历史输入">',
         '<div class="hist-ac-head"><span class="hist-ac-title"></span><span class="hist-ac-hint"></span></div>',
@@ -2440,8 +2742,10 @@ function ensureHistOverlay(paneEl){
       '</div>',
       '<div class="hist-quotes"></div>',
       '<div class="hist-compose-row">',
-        '<textarea class="hist-input" aria-label="向 agent 提问" title="Enter 发送 · Shift+Enter 换行 · Option+M 立即插话 · ↑↓ 翻找历史 · Tab 补全 · Ctrl+R 历史面板" rows="1" placeholder="输入提问或指令… (↑↓ 历史 · Tab 补全 · Alt+M 插话)" autocomplete="off" spellcheck="false"></textarea>',
+        '<textarea class="hist-input" aria-label="向 agent 提问" title="Enter 发送 · Shift+Enter 换行 · Option+M 立即插话 · ↑↓ 翻找历史 · Tab 补全 · Ctrl+R 历史面板" rows="1" placeholder="输入提问或指令…" autocomplete="off" spellcheck="false"></textarea>',
         '<div class="hist-compose-acts">',
+          '<button type="button" class="hist-ctl hist-arrow" data-terminal-key="up" aria-label="终端向上选择">↑</button>',
+          '<button type="button" class="hist-ctl hist-arrow" data-terminal-key="down" aria-label="终端向下选择">↓</button>',
           '<button type="button" class="hist-ctl" data-act="hist-upload" title="上传文件并插入路径">上传</button>',
           '<button type="button" class="hist-ctl" data-act="hist-pick" title="翻找已发送历史 (Ctrl+R / ↑↓)">历史</button>',
           '<button type="button" class="hist-ctl" data-send="esc" title="发送 Esc">Esc</button>',
@@ -2459,11 +2763,15 @@ function ensureHistOverlay(paneEl){
     sess: paneEl.dataset.sess,
     root,
     titleEl: root.querySelector('.hist-title'),
+    modelEl: root.querySelector('.hist-model-pill'),
     statusEl: root.querySelector('.hist-status'),
     searchEl: root.querySelector('.hist-search'),
     bannerEl: root.querySelector('.hist-banner'),
     bannerSig: '',
     olderHostEl: root.querySelector('.hist-older-host'),
+    jumpEl: root.querySelector('.hist-jump'),
+    pendingSendEl: root.querySelector('.hist-pending-send'),
+    pendingSendTxtEl: root.querySelector('.hist-pending-txt'),
     olderSig: '',
     listEl: root.querySelector('.hist-list'),
     selPopEl: root.querySelector('.sel-pop'),
@@ -2498,7 +2806,6 @@ function ensureHistOverlay(paneEl){
     quoteSeq: 0,
     pendingSel: null,
     lastSig: '',
-    prevTurnsLen: 0,
     data: null,
     es: null,
     esSess: '',
@@ -2506,13 +2813,21 @@ function ensureHistOverlay(paneEl){
   };
   st.stickToBottom = true;
   st.listEl.addEventListener('scroll', () => {
-    st.stickToBottom = st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight <= 8;
-    root.querySelector('.hist-jump').hidden = st.stickToBottom;
+    if (st.appliedScrollTop === st.listEl.scrollTop) {
+      st.appliedScrollTop = null;
+      syncHistJump(st);
+      return;
+    }
+    st.appliedScrollTop = null;
+    st.stickToBottom = histDistanceFromBottom(st) <= 8;
+    syncHistJump(st);
   }, { passive: true });
   // Pause following as soon as upward input arrives, including before the browser scroll event.
   st.listEl.addEventListener('wheel', e => {
-    if (e.deltaY < 0) st.stickToBottom = false;
-    else if (e.deltaY > 0 && st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight <= 2) st.stickToBottom = true;
+    st.appliedScrollTop = null;
+    if (e.deltaY < 0 && histCanScroll(st)) st.stickToBottom = false;
+    else if (e.deltaY > 0 && histDistanceFromBottom(st) <= 2) st.stickToBottom = true;
+    syncHistJump(st);
   }, { passive: true });
   let touchY = null;
   st.listEl.addEventListener('touchstart', e => {
@@ -2521,8 +2836,10 @@ function ensureHistOverlay(paneEl){
   st.listEl.addEventListener('touchmove', e => {
     if (touchY !== null && e.touches.length === 1) {
       const y = e.touches[0].clientY;
-      if (y > touchY) st.stickToBottom = false;
-      else if (y < touchY && st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight <= 2) st.stickToBottom = true;
+      st.appliedScrollTop = null;
+      if (y > touchY && histCanScroll(st)) st.stickToBottom = false;
+      else if (y < touchY && histDistanceFromBottom(st) <= 2) st.stickToBottom = true;
+      syncHistJump(st);
       touchY = y;
     }
   }, { passive: true });
@@ -2530,7 +2847,9 @@ function ensureHistOverlay(paneEl){
   st.resizeObserver = new ResizeObserver(() => {
     st.root.classList.toggle('compact', st.root.clientHeight < 520);
     if (Date.now() < (st.suppressAutoScrollUntil || 0)) return;
-    if (st.stickToBottom && st.root.classList.contains('open')) st.listEl.scrollTop = st.listEl.scrollHeight;
+    if (!st.root.classList.contains('open')) return;
+    if (st.stickToBottom) st.listEl.scrollTop = st.listEl.scrollHeight;
+    syncHistJump(st);
   });
   st.resizeObserver.observe(st.listEl);
   st.resizeObserver.observe(st.root);
@@ -2538,48 +2857,125 @@ function ensureHistOverlay(paneEl){
   const live = root.querySelector('.hist-live');
   const liveBtn = root.querySelector('.hist-btn[data-act="live"]');
   const taskStatus = root.querySelector('.hist-task-status');
-  const setTaskStatus = state => {
-    if (taskStatus.dataset.state === state) return;
+  const setTaskStatus = rawState => {
+    if (rawState === 'running') {
+      if (!st.taskStartedAt) st.taskStartedAt = Date.now();
+      st.taskDone = false;
+      st.taskDoneLabel = '';
+    } else if (rawState === 'input' && st.lastRawTaskState === 'running') {
+      const elapsed = st.taskStartedAt ? Math.round((Date.now() - st.taskStartedAt) / 1000) : 0;
+      st.taskStartedAt = 0;
+      st.taskDone = true;
+      st.taskDoneLabel = elapsed >= 1 ? ('✓ 已完成 · ' + elapsed + 's') : '✓ 已完成';
+    } else if (rawState !== 'input') {
+      st.taskStartedAt = 0;
+    }
+    st.lastRawTaskState = rawState;
+    const state = (rawState === 'input' && st.taskDone) ? 'done' : rawState;
+    const label = state === 'done'
+      ? (st.taskDoneLabel || '✓ 已完成')
+      : ({ running: '执行中', action: '⚠ 待确认', input: '等待输入' }[state] || '');
+    if (taskStatus.dataset.state === state && taskStatus.textContent === label) return;
     taskStatus.dataset.state = state;
-    taskStatus.textContent = { running: '执行中', action: '等待操作', input: '等待输入' }[state] || '';
+    taskStatus.textContent = label;
     taskStatus.hidden = !state;
+    st.root.dataset.task = state;
+  };
+  st.clearTaskDone = () => {
+    if (!st.taskDone) return;
+    st.taskDone = false;
+    st.taskDoneLabel = '';
+    setTaskStatus(st.lastRawTaskState || '');
   };
   st.liveEl = live;
   const syncLiveBtn = () => {
     if (liveBtn) liveBtn.setAttribute('aria-pressed', String(live.open));
   };
-  st.renderNativeMenu = (menu, fallbackText = '') => {
+  st.slashOutEl = root.querySelector('.hist-slash-out');
+  st.slashOutSig = '';
+  st.dismissedSlashSig = '';
+  st.renderSlashOutput = (plain, ansi) => {
+    const el = st.slashOutEl;
+    if (!el) return;
+    const text = String(plain || '').trim();
+    if (!text) st.dismissedSlashSig = '';
+    if (!text || st.nativeMenu || st.data?.menuActive) {
+      el.hidden = true;
+      st.slashOutSig = '';
+      el.replaceChildren();
+      return;
+    }
+    const sig = text;
+    if (sig === st.dismissedSlashSig) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    const renderSig = JSON.stringify([text, ansi]);
+    if (renderSig === st.slashOutSig) return;
+    st.slashOutSig = renderSig;
+    el.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'hist-slash-out-head';
+    const title = document.createElement('span');
+    title.textContent = '命令输出';
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'hist-slash-out-close';
+    closeBtn.textContent = '关闭';
+    closeBtn.addEventListener('click', () => {
+      st.dismissedSlashSig = sig;
+      el.hidden = true;
+    });
+    head.append(title, closeBtn);
+    const pre = document.createElement('pre');
+    pre.className = 'hist-slash-out-pre';
+    const pLines = text.split('\n');
+    const aLines = String(ansi || text).trim().split('\n');
+    pre.appendChild(ansiLinesToFragment(aLines.length === pLines.length ? aLines : pLines, pLines));
+    el.append(head, pre);
+  };
+  st.renderNativeMenu = (menu, fallbackText = '', closeKey = '\x1b') => {
     st.nativeMenu = menu || null;
+    st.menuCloseKey = closeKey || st.data?.menuCloseKey || '\x1b';
     const activeHeading = !menu && !fallbackText ? '' : (menu ? '' : (st.data?.menuActive || ''));
     const panel=root.querySelector('.hist-native');
     if (!menu && !activeHeading) {
       panel.hidden=true;
       st.nativeMenuSig='';
       panel.replaceChildren();
+      if (st.data) st.renderSlashOutput(st.data.slashOutput, st.data.slashOutputAnsi);
       return;
     }
+    if (st.slashOutEl) st.slashOutEl.hidden = true;
     if (!menu && activeHeading) {
-      const fSig = JSON.stringify(['fallback', activeHeading, fallbackText.slice(-1200)]);
+      const isPager = st.menuCloseKey === 'q';
+      const fSig = JSON.stringify(['fallback', activeHeading, st.menuCloseKey, isPager ? fallbackText : fallbackText.slice(-1200), st.nativeBusy]);
       panel.hidden = false;
       if (fSig === st.nativeMenuSig) return;
       st.nativeMenuSig = fSig;
       panel.replaceChildren();
       const heading = document.createElement('h3');
-      heading.textContent = '交互菜单 · ' + activeHeading;
+      heading.textContent = (isPager ? '终端视图 · ' : '交互菜单 · ') + activeHeading;
       const note = document.createElement('p');
-      note.textContent = '直接在折叠对话内使用下方按键操作，或点 Esc 返回对话。';
+      note.textContent = isPager
+        ? '直接在折叠对话内滚动查看，点「关闭 (q)」或按 Esc 返回对话。'
+        : '直接在折叠对话内使用下方按键或键盘方向键操作，按 Esc 返回对话。';
       const pre = document.createElement('pre');
       pre.className = 'hist-native-preview';
       const plain = String(fallbackText || '').replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, '');
-      const tailLines = fallbackText.split('\n').slice(-18);
-      const tailPlain = plain.split('\n').slice(-18);
-      pre.replaceChildren(ansiLinesToFragment(tailLines, tailPlain));
+      const startLine = isPager ? 0 : -20;
+      pre.replaceChildren(ansiLinesToFragment(fallbackText.split('\n').slice(startLine), plain.split('\n').slice(startLine)));
       const acts = document.createElement('div');
       acts.className = 'hist-native-actions';
-      for (const [k, label] of [['\x1b[A','↑ 上移'],['\x1b[B','↓ 下移'],['\x1b[D','←'],['\x1b[C','→'],['\t','Tab'],['\r','确认 ↵'],['\x1b','Esc 返回']]) {
+      const keyDefs = isPager
+        ? [['\x1b[A','↑ 上滚'],['\x1b[B','↓ 下滚'],['\x1b[5~','PgUp'],['\x1b[6~','PgDn'],['q','关闭 (q)']]
+        : [['\x1b[A','↑ 上移'],['\x1b[B','↓ 下移'],['\x1b[D','←'],['\x1b[C','→'],['\t','Tab'],['\r','确认 ↵'],['\x1b','Esc 返回']];
+      for (const [k, label] of keyDefs) {
         const b = document.createElement('button');
         b.type = 'button';
         b.dataset.nativeRawKey = k;
+        if (k === st.menuCloseKey) b.dataset.nativeClose = '1';
         b.textContent = label;
         b.disabled = !!st.nativeBusy;
         acts.appendChild(b);
@@ -2589,12 +2985,17 @@ function ensureHistOverlay(paneEl){
       return;
     }
     panel.hidden=false;
-    const sig=JSON.stringify([menu.signature,menu.selected,st.nativeBusy]);
+    const sig=JSON.stringify([menu.signature,menu.selected,menu.effortLevel||'',!!menu.prev,!!menu.more,menu.range||null,st.nativeBusy]);
     if(sig===st.nativeMenuSig)return;
     st.nativeMenuSig=sig;panel.replaceChildren();
     const heading=document.createElement('h3');
-    heading.textContent=({model:'选择模型',effort:'选择推理强度',permissions:'模型权限','permission-scope':'权限配置范围',session:'选择 / 恢复会话',theme:'选择主题',mcp:'MCP 服务管理',agent:'选择 Agent',skills:'技能列表'})[menu.kind]||menu.title;
-    const note=document.createElement('p');note.textContent=menu.agent+' · 选项来自当前 Agent，点击选中后再确认。';
+    heading.textContent=({model:'选择模型',effort:'选择推理强度',permissions:'模型权限','permission-scope':'权限配置范围',session:'选择 / 恢复会话',theme:'选择主题',mcp:'MCP 服务管理',agent:'选择 Agent',skills:'技能列表',config:'配置设置',update:'版本更新',credits:'额度与计费'})[menu.kind]||menu.title;
+    const note=document.createElement('p');
+    const noteParts=[menu.agent];
+    if(menu.range)noteParts.push(`第 ${menu.range.start}-${menu.range.end} / ${menu.range.total} 项`);
+    if(menu.effortLevel)noteParts.push(`推理强度: ${menu.effortLevel}`);
+    noteParts.push('点击选中后再确认。');
+    note.textContent=noteParts.join(' · ');
     const list=document.createElement('div');list.className='hist-native-options';
     menu.options.forEach((option,i)=>{
       const btn=document.createElement('button');btn.type='button';btn.dataset.nativeOption=String(i);btn.textContent=option.label;
@@ -2603,24 +3004,45 @@ function ensureHistOverlay(paneEl){
     const acts=document.createElement('div');acts.className='hist-native-actions';
     const actions=[['confirm',menu.confirmLabel||'确认选择'],['cancel','取消 (Esc)']];
     if(menu.session)actions.unshift(['session','仅本会话']);
-    if(menu.effort)actions.push(['left','降低推理强度'],['right','提高推理强度']);
-    if(menu.more)actions.push(['down','查看更多选项 ↓']);
+    if(menu.effort && menu.axis!=='horizontal')actions.push(['left','降低推理强度'],['right','提高推理强度']);
+    if(menu.prev)actions.push(['up',menu.range&&menu.range.start===menu.range.end?'上一项 ↑':'查看更多 ↑']);
+    if(menu.more)actions.push(['down',menu.range&&menu.range.start===menu.range.end?'下一项 ↓':'查看更多 ↓']);
     for(const [action,label] of actions){const b=document.createElement('button');b.type='button';b.dataset.nativeAction=action;b.textContent=label;b.disabled=!!st.nativeBusy;acts.appendChild(b);}
     panel.append(heading,note,list,acts);
   };
+  const readScreen = async () => {
+    const revision = st.screenRevision = (st.screenRevision || 0) + 1;
+    const r = await fetch('/screen?s=' + encodeURIComponent(st.sess), {cache:'no-store', signal:AbortSignal.timeout(5000)});
+    const current = () => isOpenHistOverlay(paneEl, st) && revision === st.screenRevision;
+    if (!current()) return null;
+    if (!r.ok) throw Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!current()) return null;
+    if (!data || typeof data.text !== 'string') throw Error('Invalid screen');
+    return data;
+  };
+  const forceRefreshScreen = () => st.refreshLive(true, true);
   root.querySelector('.hist-native').addEventListener('click',async e=>{
     const btn=e.target.closest('button');
-    if(!btn||btn.disabled||st.nativeBusy)return;
+    if(!btn||btn.disabled||st.nativeBusy||st.sending)return;
     if (btn.dataset.nativeRawKey !== undefined) {
       st.nativeBusy = true;
       const rawKey = btn.dataset.nativeRawKey;
+      const heading = st.data?.menuActive;
+      const closeKey = st.menuCloseKey;
       try {
+        const screen = await readScreen();
+        if (!screen) return;
+        st.syncScreenMenu(screen);
+        if (screen.nativeMenu || screen.menuActive !== heading || (screen.menuCloseKey || '\x1b') !== closeKey) return;
         if (!await sendRawToPane(paneEl, rawKey)) throw Error('发送失败，请重试');
         await new Promise(resolve => setTimeout(resolve, 140));
-        await st.refreshLive();
-        refreshHistPane(paneEl, false, false);
+        await forceRefreshScreen();
+        if (st.es && st.es.readyState === 1) pokeHistStream(st.sess);
+        else refreshHistPane(paneEl, false, false);
+        setTimeout(() => { if (isOpenHistOverlay(paneEl, st)) forceRefreshScreen(); }, 420);
       } catch (err) { toast(err.message); }
-      finally { st.nativeBusy = false; }
+      finally { st.nativeBusy = false; st.nativeMenuSig = ''; st.renderNativeMenu(st.nativeMenu, st.liveText || '', st.menuCloseKey); }
       return;
     }
     if(!st.nativeMenu)return;
@@ -2628,55 +3050,132 @@ function ensureHistOverlay(paneEl){
     st.nativeBusy=true;st.renderNativeMenu(expected);
     try {
       // Recheck the actual terminal before calculating movement; another device may have changed it.
-      const r=await fetch('/screen?s='+encodeURIComponent(st.sess),{cache:'no-store',signal:AbortSignal.timeout(5000)});
-      if(!r.ok)throw Error('菜单读取失败');
-      const current=(await r.json()).nativeMenu;
-      if(!current||current.signature!==expected.signature){st.renderNativeMenu(current);toast('Agent 菜单已变化，请重新选择');return;}
+      const screen = await readScreen();
+      if (!screen) return;
+      const current = screen.nativeMenu;
+      if (!current || current.signature !== expected.signature) {
+        st.syncScreenMenu(screen);
+        toast('Agent 菜单已变化，请重新选择');
+        return;
+      }
       let keys='';
       if(btn.dataset.nativeOption!==undefined){
         const target=Number(btn.dataset.nativeOption),delta=target-current.selected;
         if(!Number.isInteger(target)||target<0||target>=current.options.length)return;
-        keys=(delta<0?'\x1b[A':'\x1b[B').repeat(Math.abs(delta));
-      } else keys=({session:'s',confirm:'\r',cancel:'\x1b',left:'\x1b[D',right:'\x1b[C',down:'\x1b[B'})[btn.dataset.nativeAction]||'';
+        const backKey = current.axis === 'horizontal' ? '\x1b[D' : '\x1b[A';
+        const fwdKey = current.axis === 'horizontal' ? '\x1b[C' : '\x1b[B';
+        keys=(delta<0?backKey:fwdKey).repeat(Math.abs(delta));
+      } else if(btn.dataset.nativeAction==='up'){
+        const steps=(current.agent==='codex'&&current.options.length>1&&current.selected>0)?(current.selected+1):1;
+        keys='\x1b[A'.repeat(steps);
+      } else if(btn.dataset.nativeAction==='down'){
+        const steps=(current.agent==='codex'&&current.options.length>1&&current.selected<current.options.length-1)?(current.options.length-current.selected):1;
+        keys='\x1b[B'.repeat(steps);
+      } else keys=({session:'s',confirm:'\r',cancel:'\x1b',left:'\x1b[D',right:'\x1b[C'})[btn.dataset.nativeAction]||'';
       if(keys && !await sendRawToPane(paneEl,keys))throw Error('操作结果未确认，请查看当前状态后再操作');
       await new Promise(resolve=>setTimeout(resolve,180));
-      await st.refreshLive();
-      refreshHistPane(paneEl,false,false);
+      await forceRefreshScreen();
+      if (st.es && st.es.readyState === 1) pokeHistStream(st.sess);
+      else refreshHistPane(paneEl,false,false);
+      setTimeout(() => { if (isOpenHistOverlay(paneEl, st)) { forceRefreshScreen(); if (!st.es || st.es.readyState !== 1) refreshHistPane(paneEl, false, true); } }, 460);
     } catch(e){toast(e.message);}
-    finally{st.nativeBusy=false;st.nativeMenuSig='';st.renderNativeMenu(st.nativeMenu, st.liveText || '');}
+    finally{st.nativeBusy=false;st.nativeMenuSig='';st.renderNativeMenu(st.nativeMenu, st.liveText || '', st.menuCloseKey);}
   });
-  // The compose box keeps focus while a CLI picker opens. Route Enter to
-  // the verified menu action rather than the normal message submit handler.
+  // The compose box keeps focus while a CLI picker opens. Route navigation and confirm
+  // keys to the active menu rather than the normal message submit or history browse handler.
   root.addEventListener('keydown', e => {
-    if (!st.nativeMenu || e.isComposing || e.keyCode === 229 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (st.composing || e.isComposing || e.keyCode === 229 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    const menuOpen = Boolean(st.nativeMenu || st.data?.menuActive);
+    if (!menuOpen || (e.target === st.inputEl && st.acOpen)) return;
+    if (e.key === 'Escape') {
+      const cancelBtn = root.querySelector('[data-native-action="cancel"], [data-native-close="1"], [data-native-raw-key="\x1b"]');
+      if (cancelBtn) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (!st.nativeBusy && !e.repeat) cancelBtn.click();
+        return;
+      }
+    }
     const target = e.target;
     const option = target.closest('[data-native-option]');
-    if (e.key !== 'Enter' || (target !== st.inputEl && !option)) return;
-    // Enter on a different, keyboard-focused option must select that option first.
-    if (option && Number(option.dataset.nativeOption) !== st.nativeMenu.selected) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (st.nativeBusy || e.repeat) return;
-    closeAc();
-    root.querySelector('[data-native-action="confirm"]')?.click();
+    if (!st.acOpen && target === st.inputEl && !st.inputEl.value) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (st.nativeBusy || e.repeat) return;
+        if (st.nativeMenu && st.nativeMenu.axis !== 'horizontal') {
+          const nextIdx = st.nativeMenu.selected + (e.key === 'ArrowUp' ? -1 : 1);
+          const optBtn = root.querySelector(`[data-native-option="${nextIdx}"]`);
+          if (optBtn) { optBtn.click(); return; }
+          const stepBtn = root.querySelector(e.key === 'ArrowUp' ? '[data-native-action="up"]' : '[data-native-action="down"]');
+          if (stepBtn) { stepBtn.click(); return; }
+        } else {
+          const rawBtn = root.querySelector(e.key === 'ArrowUp' ? '[data-native-raw-key="\x1b[A"]' : '[data-native-raw-key="\x1b[B"]');
+          if (rawBtn) rawBtn.click();
+        }
+        return;
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (st.nativeMenu && st.nativeMenu.axis === 'horizontal') {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          if (st.nativeBusy || e.repeat) return;
+          const nextIdx = st.nativeMenu.selected + (e.key === 'ArrowLeft' ? -1 : 1);
+          const optBtn = root.querySelector(`[data-native-option="${nextIdx}"]`);
+          if (optBtn) optBtn.click();
+          return;
+        }
+        if (st.nativeMenu?.effort || !st.nativeMenu) {
+          const dirBtn = root.querySelector(e.key === 'ArrowLeft'
+            ? '[data-native-action="left"], [data-native-raw-key="\x1b[D"]'
+            : '[data-native-action="right"], [data-native-raw-key="\x1b[C"]');
+          if (dirBtn) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (!st.nativeBusy && !e.repeat) dirBtn.click();
+            return;
+          }
+        }
+      }
+    }
+    if (e.key !== 'Enter') return;
+    if (st.nativeMenu) {
+      if (target !== st.inputEl && !option) return;
+      // Enter on a different, keyboard-focused option must select that option first.
+      if (option && Number(option.dataset.nativeOption) !== st.nativeMenu.selected) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (st.nativeBusy || e.repeat) return;
+      closeAc();
+      root.querySelector('[data-native-action="confirm"]')?.click();
+    } else if (target === st.inputEl && !st.inputEl.value && !st.acOpen) {
+      const enterBtn = root.querySelector('[data-native-raw-key="\r"]');
+      if (enterBtn) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (!st.nativeBusy && !e.repeat) enterBtn.click();
+      }
+    }
   }, true);
   st.syncScreenMenu = data => {
-    if (st.data) st.data.menuActive = data.menuActive || '';
-    st.renderNativeMenu(data.nativeMenu, (!data.nativeMenu && data.menuActive) ? String(data.text || '') : '');
+    if (st.data) {
+      st.data.menuActive = data.menuActive || '';
+      st.data.menuCloseKey = data.menuCloseKey || '\x1b';
+    }
+    st.renderNativeMenu(data.nativeMenu, (!data.nativeMenu && data.menuActive) ? String(data.text || '') : '', data.menuCloseKey || '\x1b');
   };
-  st.refreshLive = async () => {
-    if (st.liveBusy || document.hidden || !paneEl.classList.contains('on') || !root.classList.contains('open')) return;
+  st.refreshLive = async (force = false, fromMenuAction = false) => {
+    if (st.liveBusy || (!fromMenuAction && (st.nativeBusy || st.sending)) || isWebtermPaused() || !paneEl.classList.contains('on') || !root.classList.contains('open')) return;
     const agent = st.data?.runningAgent || (!isShellCmdName(st.data?.cmd) && st.data?.agent);
-    if (!live.open && !st.data?.menuActive && !st.nativeMenu) {
-      if (agent !== 'codex' && agent !== 'agy') { setTaskStatus(''); return; }
+    if (!force && !live.open && !st.data?.menuActive && !st.nativeMenu) {
+      if (agent !== 'codex' && agent !== 'agy' && agent !== 'claude') { setTaskStatus(''); return; }
       if (Date.now() < (st.nextScreenStatusAt || 0)) return;
     }
-    st.nextScreenStatusAt = Date.now() + 2000;
+    st.nextScreenStatusAt = Date.now() + wtNet.screenMs();
     st.liveBusy = true;
     try {
-      const r = await fetch('/screen?s=' + encodeURIComponent(st.sess), {cache:'no-store', signal:AbortSignal.timeout(5000)});
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const data = await r.json();
+      const data = await readScreen();
+      if (!data) return;
       setTaskStatus(terminalTaskState(agent, data));
       const text = String(data.text || '');
       if (text !== st.liveText) {
@@ -2703,7 +3202,7 @@ function ensureHistOverlay(paneEl){
     if (live.open) { st.liveTextFirst = true; st.liveText = null; st.refreshLive(); }
   });
   st.liveTimer=setInterval(st.refreshLive,1000);
-  root.querySelector('.hist-terminal-keys').addEventListener('click', async e => {
+  root.addEventListener('click', async e => {
     const btn = e.target.closest('[data-terminal-key]');
     if (!btn || btn.disabled) return;
     const keys = {up:'\x1b[A', down:'\x1b[B', left:'\x1b[D', right:'\x1b[C', tab:'\t', enter:'\r'};
@@ -2714,10 +3213,10 @@ function ensureHistOverlay(paneEl){
     setTimeout(st.refreshLive, 100);
     pokeHistStream(st.sess);
   });
-  root.querySelector('.hist-jump').addEventListener('click', () => {
+  st.jumpEl.addEventListener('click', () => {
     st.followLatest = true; st.selectedAnchor = null; st.searchEl.value = ''; st.showOlder = false;
     renderHistList(paneEl); st.stickToBottom = true; st.listEl.scrollTop = st.listEl.scrollHeight;
-    root.querySelector('.hist-jump').hidden = true;
+    syncHistJump(st);
   });
   restoreHistDraft(st);
   renderQuoteChips(st);
@@ -2728,6 +3227,7 @@ function ensureHistOverlay(paneEl){
   };
 
   const updateSelPop = () => {
+    if (!isOpenHistOverlay(paneEl, st)) return;
     const sel = window.getSelection && window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) return hideSelPop();
     const text = sel.toString().replace(/[ \t]+\n/g, '\n').trim();
@@ -2750,10 +3250,18 @@ function ensureHistOverlay(paneEl){
     const rawLeft = (rect.left - rootRect.left) + Math.min(rect.width / 2, 120) - popW / 2;
     const left = Math.max(8, Math.min(rootRect.width - popW - 8, rawLeft));
     const barBottom = (st.listEl.getBoundingClientRect().top - rootRect.top) + 4;
-    let top = rect.top - rootRect.top - popH - 6;
-    if (top < barBottom) top = Math.min(st.listEl.getBoundingClientRect().bottom - rootRect.top - popH - 6, rect.bottom - rootRect.top + 6);
+    const listBottom = (st.listEl.getBoundingClientRect().bottom - rootRect.top) - popH - 6;
+    let top;
+    if (touchPrimary.matches) {
+      // On iOS/mobile, place below the selection to avoid colliding with the native Copy callout above it.
+      top = rect.bottom - rootRect.top + 10;
+      if (top > listBottom) top = rect.top - rootRect.top - popH - 10;
+    } else {
+      top = rect.top - rootRect.top - popH - 6;
+      if (top < barBottom) top = Math.min(listBottom, rect.bottom - rootRect.top + 6);
+    }
     st.selPopEl.style.left = Math.round(left) + 'px';
-    st.selPopEl.style.top = Math.round(Math.max(barBottom, top)) + 'px';
+    st.selPopEl.style.top = Math.round(Math.max(barBottom, Math.min(listBottom, top))) + 'px';
   };
 
   const applyQuoteSelection = () => {
@@ -2768,30 +3276,62 @@ function ensureHistOverlay(paneEl){
   st.listEl.addEventListener('mouseup', () => setTimeout(updateSelPop, 10));
   st.listEl.addEventListener('touchend', () => setTimeout(updateSelPop, 140));
   st.listEl.addEventListener('scroll', hideSelPop);
+  let selChangeTimer = 0;
   st.onSelectionChange = () => {
     if (!st.root.classList.contains('open')) return;
-    const sel = window.getSelection && window.getSelection();
-    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+    if (!isSelectingInList(st)) {
+      clearTimeout(selChangeTimer);
       if (st.selPopEl.classList.contains('open')) hideSelPop();
       if (st.pendingData) {
         const pending = st.pendingData;
         st.pendingData = null;
         applyHistData(paneEl, pending, false, true);
       }
+      return;
     }
+    // Keep selection popup & text synced when user drags iOS/Android selection handles.
+    clearTimeout(selChangeTimer);
+    selChangeTimer = setTimeout(updateSelPop, 110);
   };
   document.addEventListener('selectionchange', st.onSelectionChange);
-  st.selPopEl.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
-  st.selPopEl.addEventListener('click', e => {
-    const btn = e.target.closest('[data-sel]');
-    if (!btn || !st.pendingSel) return;
+  const handleSelPopAction = btn => {
+    const text = st.pendingSel?.text || '';
+    if (!btn || !text) return;
     if (btn.dataset.sel === 'quote') {
+      st.pendingSel = { text, turnIndex: (st.pendingSel && st.pendingSel.turnIndex) || 0 };
       applyQuoteSelection();
     } else if (btn.dataset.sel === 'copy') {
-      copyTextTop(st.pendingSel.text);
-      hideSelPop();
-      try { window.getSelection().removeAllRanges(); } catch (err) {}
+      if (copyTextTop(text)) {
+        hideSelPop();
+        try { window.getSelection().removeAllRanges(); } catch (err) {}
+      } else {
+        toast('复制失败，请使用系统复制');
+      }
     }
+  };
+  st.selPopEl.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); });
+  let selectionTap = null;
+  st.selPopEl.addEventListener('touchstart', e => {
+    const btn = e.target.closest('[data-sel]');
+    if (!btn || e.touches.length !== 1) { selectionTap = null; return; }
+    const touch = e.changedTouches[0];
+    selectionTap = { btn, id:touch.identifier, x:touch.clientX, y:touch.clientY };
+    e.preventDefault();
+  }, { passive: false });
+  st.selPopEl.addEventListener('touchcancel', () => { selectionTap = null; });
+  st.selPopEl.addEventListener('touchend', e => {
+    if (!selectionTap) return;
+    const tap = selectionTap;
+    selectionTap = null;
+    const touch = Array.from(e.changedTouches).find(t => t.identifier === tap.id);
+    if (!touch || Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y) > 12) return;
+    e.preventDefault();
+    handleSelPopAction(tap.btn);
+  }, { passive: false });
+  st.selPopEl.addEventListener('click', e => {
+    const btn = e.target.closest('[data-sel]');
+    if (!btn) return;
+    handleSelPopAction(btn);
   });
   st.root.addEventListener('keydown', e => {
     if (!st.selPopEl.classList.contains('open') || !st.pendingSel) return;
@@ -2937,6 +3477,7 @@ function ensureHistOverlay(paneEl){
     return { type: 'text', word: wm ? wm[1] : '', start: wm ? (pos - wm[1].length) : pos, end: pos, val, pos };
   };
   const scheduleAutocomplete = (immediate = false) => {
+    if (st.composing) return;
     clearTimeout(st.acTimer);
     if (st.acAbort) { st.acAbort.abort(); st.acAbort = null; }
     st.acRevision = (st.acRevision || 0) + 1;
@@ -2956,6 +3497,7 @@ function ensureHistOverlay(paneEl){
       }
     }
     if (tok.type === 'path') {
+      closeAc();
       const query = tok.query;
       const range = { start: tok.start, end: tok.end };
       const runPath = async () => {
@@ -3044,42 +3586,58 @@ function ensureHistOverlay(paneEl){
   };
   const sendBtn = root.querySelector('.hist-send');
   const doSend = async () => {
-    if (st.sending) return;
+    if (st.sending || st.nativeBusy || !isOpenHistOverlay(paneEl, st)) return false;
     closeAc();
     const draftText = st.inputEl.value;
     const sentQuoteIds = new Set(st.quotes.map(q => q.id));
     const val = st.quotes.length ? formatQuotedSubmission(st.quotes, draftText) : draftText;
     st.sending = true;
-    if (sendBtn) sendBtn.disabled = true;
+    st.root.classList.add('busy');
+    if (sendBtn) { sendBtn.disabled = true; sendBtn.textContent = '发送中…'; }
+    const previewOneLine = val.replace(/\s+/g, ' ').trim();
+    if (st.pendingSendEl && st.pendingSendTxtEl && previewOneLine) {
+      clearTimeout(st.pendingSendTimer);
+      st.pendingSendEl.querySelector('.hist-pending-badge').textContent = '发送中';
+      st.pendingSendTxtEl.textContent = previewOneLine.slice(0, 120);
+      st.pendingSendEl.hidden = false;
+    }
     let sent = false;
     try {
       if (st.nativeMenu || st.data?.menuActive) {
         try {
-          const r = await fetch('/screen?s=' + encodeURIComponent(st.sess), {cache:'no-store', signal:AbortSignal.timeout(5000)});
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          const data = await r.json();
-          if (!data || typeof data.text !== 'string') throw new Error('Invalid screen');
+          const data = await readScreen();
+          if (!data) return false;
           st.syncScreenMenu(data);
         } catch (e) {
           toast('暂时无法确认菜单状态，草稿已保留，请稍后重试');
-          return;
+          return false;
         }
         if (st.nativeMenu || st.data?.menuActive) {
           toast('请先完成或取消当前 Agent 菜单，草稿已保留');
-          return;
+          return false;
         }
       }
+      if (!isOpenHistOverlay(paneEl, st)) return false;
+      st.clearTaskDone?.();
       sent = await submitFromHist(paneEl, val);
     }
     finally {
       st.sending = false;
-      if (sendBtn) sendBtn.disabled = false;
+      st.root.classList.remove('busy');
+      if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = '发送'; }
+      if (!sent && st.pendingSendEl) st.pendingSendEl.hidden = true;
     }
     if (!sent) {
       toast('发送结果未确认，草稿已保留；请先查看终端，避免重复发送');
-      return;
+      return false;
+    }
+    if (st.pendingSendEl) {
+      clearTimeout(st.pendingSendTimer);
+      st.pendingSendEl.querySelector('.hist-pending-badge').textContent = '已发送';
+      st.pendingSendTimer = setTimeout(() => { st.pendingSendEl.hidden = true; }, 1600);
     }
     if (draftText.trim()) pushInputHistory(draftText);
+    if (paneHistState.get(paneEl) !== st) return true;
     st.histBrowseIdx = -1;
     st.histBrowseStash = '';
     st.histBrowseValue = '';
@@ -3092,36 +3650,57 @@ function ensureHistOverlay(paneEl){
     st.selectedAnchor = null;
     st.showOlder = false;
     setTimeout(() => {
-      pokeHistStream(paneEl.dataset.sess);
+      if (!isOpenHistOverlay(paneEl, st)) return;
+      pokeHistStream(st.sess);
       if (!st.es || st.es.readyState !== 1) refreshHistPane(paneEl, false, true);
     }, 35);
+    if (/^\s*\//.test(val)) {
+      st.dismissedSlashSig = '';
+      st.renderSlashOutput(st.data?.slashOutput, st.data?.slashOutputAnsi);
+      for (const delay of [150, 450, 900]) {
+        setTimeout(() => {
+          if (isOpenHistOverlay(paneEl, st)) st.refreshLive(true);
+        }, delay);
+      }
+    }
+    return true;
   };
   resizeCompose();
   st.blockAltMuUntil = 0;
-  st.triggerAltM = async () => {
+  st.triggerAltM = async (sendDraft = true) => {
+    if (st.altMBusy || st.sending || !isOpenHistOverlay(paneEl, st)) return;
     if (st.nativeMenu || st.data?.menuActive) { toast('菜单打开中，已保留草稿'); return; }
-    const hasDraft = Boolean(st.inputEl.value.trim() || st.quotes.length);
-    if (hasDraft) {
-      await doSend();
-      setTimeout(() => {
-        sendRawToPane(paneEl, '\x1bm').then(ok => {
-          if (ok) toast('已发送并执行 Alt+M 立即插话');
-          setTimeout(() => pokeHistStream(paneEl.dataset.sess), 35);
-        });
-      }, 90);
-      return;
+    st.altMBusy = true;
+    try {
+      const hasDraft = sendDraft && Boolean(st.inputEl.value.trim() || st.quotes.length);
+      if (hasDraft) {
+        if (!await doSend()) return;
+        await new Promise(resolve => setTimeout(resolve, 90));
+      }
+      if (!isOpenHistOverlay(paneEl, st)) return;
+      const ok = await sendRawToPane(paneEl, '\x1bm');
+      if (ok) toast(hasDraft ? '已发送并执行 Alt+M 立即插话' : '已发送 Alt+M 立即插话');
+      else toast('Alt+M 发送结果未确认，请查看终端状态');
+      setTimeout(() => pokeHistStream(st.sess), 35);
+    } finally {
+      st.altMBusy = false;
     }
-    const ok = await sendRawToPane(paneEl, '\x1bm');
-    if (ok) toast('已发送 Alt+M 立即插话');
-    else toast('Alt+M 发送失败，请检查会话状态');
-    setTimeout(() => pokeHistStream(paneEl.dataset.sess), 35);
   };
   st.inputEl.addEventListener('beforeinput', e => {
     if (st.blockAltMuUntil > Date.now() && (e.data === 'µ' || e.data === 'Μ')) {
       e.preventDefault();
     }
   });
-  st.inputEl.addEventListener('input', () => {
+  st.inputEl.addEventListener('compositionstart', () => {
+    st.composing = true;
+    closeAc();
+  });
+  st.inputEl.addEventListener('compositionend', () => {
+    st.composing = false;
+    saveHistDraft(st);
+    scheduleAutocomplete(false);
+  });
+  st.inputEl.addEventListener('input', e => {
     if (st.blockAltMuUntil > Date.now() && /[µΜ]$/.test(st.inputEl.value)) {
       const p = st.inputEl.selectionStart || st.inputEl.value.length;
       st.inputEl.value = st.inputEl.value.slice(0, -1);
@@ -3133,15 +3712,16 @@ function ensureHistOverlay(paneEl){
     }
     resizeCompose();
     saveHistDraft(st);
-    scheduleAutocomplete(false);
+    if (st.inputEl.value.trim()) st.clearTaskDone?.();
+    if (!e.isComposing) scheduleAutocomplete(false);
   });
   st.inputEl.addEventListener('keydown', e => {
-    if (e.isComposing || e.keyCode === 229) return;
+    if (st.composing || e.isComposing || e.keyCode === 229) return;
     if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.code === 'KeyM' || e.key === 'µ' || e.key === 'm' || e.key === 'M')) {
       e.preventDefault();
       e.stopPropagation();
       st.blockAltMuUntil = Date.now() + 160;
-      st.triggerAltM();
+      if (!e.repeat) st.triggerAltM();
       return;
     }
     if (e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'r' || e.key === 'R')) {
@@ -3297,7 +3877,12 @@ function ensureHistOverlay(paneEl){
     setTimeout(() => pokeHistStream(paneEl.dataset.sess), 25);
   });
 
-  st.searchEl.addEventListener('input', () => renderHistList(paneEl));
+  st.searchEl.addEventListener('input', () => {
+    const keepBottom = st.followLatest || st.stickToBottom;
+    renderHistList(paneEl);
+    if (!st.searchEl.value.trim() && keepBottom) st.listEl.scrollTop = st.listEl.scrollHeight;
+    syncHistJump(st);
+  });
   root.querySelector('.hist-acts').addEventListener('click', e => {
     const btn = e.target.closest('[data-act]');
     if (btn?.dataset.act === 'live') {
@@ -3316,7 +3901,6 @@ function ensureHistOverlay(paneEl){
 }
 
 function isSelectingInList(st){
-  if (st.selPopEl && st.selPopEl.classList.contains('open')) return true;
   const sel = window.getSelection && window.getSelection();
   if (!sel || sel.isCollapsed || !sel.rangeCount || !sel.toString()) return false;
   try {
@@ -3371,7 +3955,7 @@ function makeAgentBannerCard(agent, model, cwd, bannerPlain){
   top.appendChild(name);
 
   let modelText = model || '';
-  if (!modelText && bannerPlain) {
+  if (!modelText && bannerPlain && agent !== 'codex' && agent !== 'agy') {
     const m = bannerPlain.match(/·\s*([^\n]+)$/);
     if (m) modelText = m[1].trim();
   }
@@ -3409,11 +3993,17 @@ function renderHistList(paneEl){
     : turns;
 
   st.titleEl.textContent = 'wt-' + (sess || (paneEl.dataset && paneEl.dataset.sess) || '') + (effAgent ? ' · ' + effAgent : '');
+  if (st.modelEl) {
+    st.modelEl.textContent = model || '';
+    st.modelEl.title = model || '';
+    st.modelEl.hidden = !model;
+  }
 
   const bannerRaw = String(bannerAnsi || banner || '');
   const bannerPlain = String(banner || '');
-  const hasPixelArt = Boolean(bannerCaptured && /[▄▀█▐▛▜▝▘☤]/.test(bannerPlain));
-  const showBanner = Boolean((bannerRaw || effAgent) && filtered.length);
+  const showAgentStatus = effAgent === 'codex' || effAgent === 'agy';
+  const hasPixelArt = Boolean(!showAgentStatus && bannerCaptured && /[▄▀█▐▛▜▝▘☤]/.test(bannerPlain));
+  const showBanner = showAgentStatus || Boolean((bannerRaw || effAgent) && filtered.length);
   const nextBannerSig = showBanner ? (hasPixelArt ? ('art:' + bannerRaw) : ('card:' + effAgent + '|' + model + '|' + cwd)) : '';
   if (st.bannerEl && st.bannerSig !== nextBannerSig) {
     if (showBanner) {
@@ -3448,8 +4038,10 @@ function renderHistList(paneEl){
     if (q) {
       empty.textContent = '没有匹配「' + st.searchEl.value.trim() + '」的对话';
     } else if (st.data.menuActive) {
-      st.listEl.appendChild(makeAgentBannerCard(effAgent, model, cwd, bannerPlain));
+      if (!showBanner) st.listEl.appendChild(makeAgentBannerCard(effAgent, model, cwd, bannerPlain));
       empty.textContent = '终端菜单已打开，请在下方功能面板中选择；Esc 返回。';
+    } else if (showAgentStatus) {
+      empty.textContent = '暂未识别到对话，可在原终端查看当前输出。';
     } else if (agent && !bannerCaptured && /[╭╰].*(?:zts|[>❯])/m.test(preamble)) {
       st.listEl.appendChild(makeAgentBannerCard(effAgent, model, cwd, bannerPlain));
       empty.textContent = '等待新对话。启动状态可在“查看原终端画面”查看。';
@@ -3493,7 +4085,7 @@ function renderHistList(paneEl){
   const olderTurns = filtered.length > 1 ? filtered : [];
   const showList = !!q || st.showOlder;
   const isLatest = activeKey === latestKey;
-  const promptSig = normalizeSpinners(activeTurn.promptAnsi || activeTurn.prompt || '');
+  const promptSig = activeTurn.promptAnsi || activeTurn.prompt || '';
 
   // Render the older-turns drawer in its fixed host above .hist-list so streaming never destroys it or hides it off-scroll.
   const nextOlderSig = olderTurns.length > 1
@@ -3536,7 +4128,7 @@ function renderHistList(paneEl){
           txt.textContent = t.summary || '(无正文)';
           row.append(num, txt);
           row.addEventListener('click', () => {
-            st.suppressAutoScrollUntil = Date.now() + 260;
+            st.suppressAutoScrollUntil = k === latestKey ? 0 : (Date.now() + 260);
             st.selectedKey = k;
             st.stickToBottom = k === latestKey;
             if (k === latestKey) {
@@ -3549,6 +4141,7 @@ function renderHistList(paneEl){
             if (!q) st.showOlder = false;
             renderHistList(paneEl);
             st.listEl.scrollTop = (k === latestKey) ? st.listEl.scrollHeight : 0;
+            syncHistJump(st);
           });
           list.appendChild(row);
         }
@@ -3564,27 +4157,36 @@ function renderHistList(paneEl){
     st.olderSig = nextOlderSig;
   }
 
-  // Reuse outer structure during streaming updates so earlier lines and scroll position do not flicker.
-  if (st.dom &&
-      st.dom.activeKey === activeKey &&
-      st.dom.isLatest === isLatest &&
-      st.dom.q === q) {
+  // Reuse outer structure during streaming updates (even if scrollback shifts turn indices)
+  // so earlier lines and scroll position never flicker or jump to top.
+  const sameTurnDom = Boolean(
+    st.dom &&
+    st.dom.isLatest === isLatest &&
+    st.dom.q === q &&
+    (st.dom.activeKey === activeKey || (isLatest && st.dom.promptSig === promptSig))
+  );
+  if (sameTurnDom) {
+    st.dom.activeKey = activeKey;
+    st.dom.turnWrapEl.dataset.turnIdx = String(activeTurn.index);
     if (st.dom.promptSig !== promptSig) {
       const prPlain = String(activeTurn.prompt || '').split('\n');
       const prAnsi = String(activeTurn.promptAnsi || activeTurn.prompt || '').split('\n');
       st.dom.promptEl.replaceChildren(ansiLinesToFragment(prAnsi.length === prPlain.length ? prAnsi : prPlain, prPlain));
       st.dom.promptSig = promptSig;
     }
+    st.dom.replyText = String(activeTurn.reply || '');
     if (activeTurn.reply) {
       if (!st.dom.replyHostEl) {
         st.dom.replyHostEl = document.createElement('div');
-        st.dom.turnWrapEl.appendChild(st.dom.replyHostEl);
+        st.dom.turnWrapEl.insertBefore(st.dom.replyHostEl, st.dom.copyRowEl || null);
       }
       st.dom.blocks = patchReplyHost(st.dom.replyHostEl, activeTurn, st, activeKey, paneEl, st.dom.blocks);
+      if (st.dom.copyRowEl) st.dom.copyRowEl.hidden = false;
     } else if (st.dom.replyHostEl) {
       st.dom.replyHostEl.remove();
       st.dom.replyHostEl = null;
       st.dom.blocks = [];
+      if (st.dom.copyRowEl) st.dom.copyRowEl.hidden = true;
     }
     return;
   }
@@ -3605,12 +4207,14 @@ function renderHistList(paneEl){
     back.className = 'hist-back-latest';
     back.textContent = '回到最新轮 ↘';
     back.addEventListener('click', () => {
+      st.suppressAutoScrollUntil = 0;
       st.followLatest = true;
       st.stickToBottom = true;
       st.selectedAnchor = null;
       st.selectedKey = latestKey;
       renderHistList(paneEl);
       st.listEl.scrollTop = st.listEl.scrollHeight;
+      syncHistJump(st);
     });
     meta.append(lbl, back);
     turnWrap.appendChild(meta);
@@ -3631,6 +4235,20 @@ function renderHistList(paneEl){
     turnWrap.appendChild(replyHostEl);
   }
 
+  const copyRowEl = document.createElement('div');
+  copyRowEl.className = 'hist-copy-row';
+  copyRowEl.hidden = !activeTurn.reply;
+  const copyReplyBtn = document.createElement('button');
+  copyReplyBtn.type = 'button';
+  copyReplyBtn.className = 'hist-copy-btn';
+  copyReplyBtn.textContent = '复制本轮回复';
+  copyReplyBtn.addEventListener('click', () => {
+    const txt = (st.dom && st.dom.replyText) || String(activeTurn.reply || '');
+    if (!copyTextTop(txt)) toast('复制失败，请使用系统复制');
+  });
+  copyRowEl.appendChild(copyReplyBtn);
+  turnWrap.appendChild(copyRowEl);
+
   frag.appendChild(turnWrap);
   st.listEl.replaceChildren(frag);
   st.dom = {
@@ -3641,6 +4259,8 @@ function renderHistList(paneEl){
     promptEl: pr,
     promptSig,
     replyHostEl,
+    copyRowEl,
+    replyText: String(activeTurn.reply || ''),
     blocks
   };
 }
@@ -3648,75 +4268,105 @@ function renderHistList(paneEl){
 function applyHistData(paneEl, nextData, applyScroll = false, silent = true){
   const st = ensureHistOverlay(paneEl);
   const nextSig = histSignature(nextData);
-  if (silent && isSelectingInList(st)) { st.pendingData = nextData; return; }
+  if (st.data && isSelectingInList(st)) { st.pendingData = nextData; return; }
   st.pendingData = null;
   if (silent && nextSig === st.lastSig) return;
 
-  const wasFollowing = st.stickToBottom && (st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight) <= 2;
+  const wasFollowing = st.stickToBottom && histDistanceFromBottom(st) <= 8;
   const keepTop = st.listEl.scrollTop;
-  const prevLen = st.prevTurnsLen || 0;
-  const menuChanged = Boolean(nextData.menuActive) !== Boolean(st.data?.menuActive) || nextData.menuActive !== st.data?.menuActive;
+  const sourceChanged = st.data && (st.data.threadId !== nextData.threadId || st.data.historySource !== nextData.historySource);
+  if (sourceChanged) {
+    st.seenTurnLines?.clear();
+    st.openLongTurns.clear();
+    st.closedStepBlocks.clear();
+    st.dom = null;
+    st.followLatest = true;
+    st.selectedAnchor = null;
+  }
+  const menuChanged = Boolean(nextData.menuActive) !== Boolean(st.data?.menuActive) || nextData.menuActive !== st.data?.menuActive || nextData.menuCloseKey !== st.data?.menuCloseKey;
   st.data = nextData;
   if (menuChanged) {
     st.rawMenuHeading = '';
     if (!nextData.menuActive) st.renderNativeMenu(null);
-    st.refreshLive();
+    st.refreshLive(true);
   }
+  st.renderSlashOutput?.(nextData.slashOutput, nextData.slashOutputAnsi);
   st.lastSig = nextSig;
   const turns = nextData.turns || [];
-  st.prevTurnsLen = turns.length;
+  if (st.seenTurnLines) {
+    const currentKeys = new Set(turns.map(turnStateKey));
+    for (const key of st.seenTurnLines.keys()) {
+      if (!currentKeys.has(key)) {
+        st.seenTurnLines.delete(key);
+        st.openLongTurns.delete(key);
+      }
+    }
+  }
 
   if (st.followLatest || !st.selectedKey) {
     st.selectedKey = turns.length ? turnStateKey(turns[turns.length - 1]) : null;
   }
   renderHistList(paneEl);
-  const onLatest = !!(st.dom && st.dom.isLatest);
-  if (Date.now() < (st.suppressAutoScrollUntil || 0)) {
-    st.listEl.scrollTop = keepTop;
-    st.stickToBottom = (st.listEl.scrollHeight - st.listEl.scrollTop - st.listEl.clientHeight) <= 8;
-    return;
-  }
-  st.stickToBottom = applyScroll || (onLatest && wasFollowing);
-  if (st.stickToBottom) {
-    st.listEl.scrollTop = st.listEl.scrollHeight;
-  } else {
-    st.listEl.scrollTop = keepTop;
-  }
+  const onLatest = Boolean(st.dom?.isLatest);
+  const suppressFollow = Date.now() < (st.suppressAutoScrollUntil || 0);
+  st.stickToBottom = !suppressFollow && (applyScroll || (onLatest && wasFollowing));
+  setHistScrollTop(st, st.stickToBottom ? st.listEl.scrollHeight : keepTop);
+  syncHistJump(st);
+}
+
+function isOpenHistOverlay(paneEl, st){
+  return Boolean(st && paneEl.isConnected && paneEl.dataset.sess === st.sess &&
+    paneHistState.get(paneEl) === st && st.root.classList.contains('open'));
 }
 
 async function refreshHistPane(paneEl, applyScroll = true, silent = false, retry = 0){
-  const st = ensureHistOverlay(paneEl);
-  if (!silent && !st.data) st.titleEl.textContent = '加载中…';
+  const st = paneHistState.get(paneEl);
+  if (!isOpenHistOverlay(paneEl, st)) return;
+  if (!silent && !st.data) {
+    st.titleEl.textContent = '加载中…';
+    if (!st.listEl.childElementCount) {
+      st.listEl.innerHTML = '<div class="hist-skel" aria-hidden="true"><div class="hist-skel-bar s1"></div><div class="hist-skel-bar s2"></div><div class="hist-skel-bar s3"></div></div>';
+    }
+  }
   const revision = st.streamRevision || 0;
   const requestId = st.refreshId = (st.refreshId || 0) + 1;
+  const isCurrent = () => isOpenHistOverlay(paneEl, st) &&
+    requestId === st.refreshId && revision === (st.streamRevision || 0);
   try {
     const useProbe = !st.data && retry < 12;
     const r = await fetch('/history?s=' + encodeURIComponent(paneEl.dataset.sess) + (useProbe ? '&probe=1' : ''), { cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const nextData = await r.json();
-    if (requestId !== st.refreshId || revision !== (st.streamRevision || 0)) return;
-    if (nextData && nextData.pending && retry < 12 && paneEl.isConnected && st.root.classList.contains('open')) {
+    if (!isCurrent()) return;
+    if (nextData && nextData.pending && retry < 12) {
       setTimeout(() => {
-        if (requestId === st.refreshId && paneEl.isConnected && st.root.classList.contains('open')) {
-          refreshHistPane(paneEl, applyScroll, silent, retry + 1);
-        }
+        if (isCurrent()) refreshHistPane(paneEl, applyScroll, silent, retry + 1);
       }, 350);
       return;
     }
     applyHistData(paneEl, nextData, applyScroll, silent);
     if (retry > 0) openHistStream(paneEl);
   } catch (err) {
-    if (!silent && requestId === st.refreshId && revision === (st.streamRevision || 0)) {
-      st.titleEl.textContent = '读取失败';
-      st.dom = null;
-      st.listEl.innerHTML = '<div class="hist-empty">读取历史失败：' + String(err.message || err) + '</div>';
+    if (silent || !isCurrent()) return;
+    if (st.data) {
+      toast('刷新失败，已保留当前对话');
+      return;
     }
+    st.titleEl.textContent = '读取失败';
+    const errorEl = document.createElement('div');
+    errorEl.className = 'hist-empty';
+    errorEl.textContent = '读取历史失败：' + String(err.message || err);
+    st.listEl.replaceChildren(errorEl);
   }
 }
 
 function closeHistStream(paneEl){
   const st = paneHistState.get(paneEl);
-  if (st && st.streamFrame) { cancelAnimationFrame(st.streamFrame); st.streamFrame = 0; st.nextStreamData = null; }
+  if (!st) return;
+  if (st.streamFrame) cancelAnimationFrame(st.streamFrame);
+  st.streamFrame = 0;
+  st.nextStreamData = null;
+  st.streamSnapshot = null;
   if (st && st.es) {
     try { st.es.close(); } catch (e) {}
     st.es = null;
@@ -3740,40 +4390,82 @@ function disposeHistOverlay(paneEl){
 function openHistStream(paneEl){
   const st = ensureHistOverlay(paneEl);
   const sess = paneEl && paneEl.dataset && paneEl.dataset.sess;
-  if (!sess || document.hidden || !window.EventSource) return;
-  if (st.es && st.esSess === sess && st.es.readyState !== 2) return;
+  if (!sess || isWebtermPaused() || !window.EventSource) return;
+  const netMode = wtNet.sseMode();
+  if (st.es && st.esSess === sess && st.es.readyState !== 2 &&
+      (st.esNetMode === netMode || st.es.readyState === 0 || !wtNet.modeSettled())) return;
   closeHistStream(paneEl);
-  const es = new EventSource('/history-stream?s=' + encodeURIComponent(sess));
+  const es = new EventSource('/history-stream?s=' + encodeURIComponent(sess) + '&delta=1&net=' + encodeURIComponent(netMode));
   st.es = es;
   st.esSess = sess;
+  st.esNetMode = netMode;
+  st.lastStreamActivityAt = Date.now();
   st.statusEl.textContent = '连接中';
-  es.addEventListener('open', () => { if (st.es === es) st.statusEl.textContent = '已连接'; });
+  const queueStreamData = nextData => {
+    st.lastStreamActivityAt = Date.now();
+    st.statusEl.textContent = '已连接';
+    st.streamRevision = (st.streamRevision || 0) + 1;
+    st.streamSnapshot = nextData;
+    st.nextStreamData = nextData;
+    if (!st.streamFrame) st.streamFrame = requestAnimationFrame(() => {
+      st.streamFrame = 0;
+      const latest = st.nextStreamData;
+      st.nextStreamData = null;
+      if (latest && st.es === es && isOpenHistOverlay(paneEl, st)) applyHistData(paneEl, {...latest}, !st.data, !!st.data);
+    });
+  };
+  es.addEventListener('open', () => {
+    if (st.es !== es) return;
+    st.streamSnapshot = null;
+    st.lastStreamActivityAt = Date.now();
+    st.statusEl.textContent = '已连接';
+  });
+  es.addEventListener('heartbeat', () => {
+    if (st.es === es) st.lastStreamActivityAt = Date.now();
+  });
   es.addEventListener('error', () => { if (st.es === es) st.statusEl.textContent = '正在重连'; });
   es.addEventListener('err', () => { if (st.es === es) st.statusEl.textContent = '会话不可用'; });
   es.addEventListener('hist', e => {
-    if (!st.root.classList.contains('open')) { closeHistStream(paneEl); return; }
+    if (st.es !== es || isWebtermPaused()) return;
+    if (!isOpenHistOverlay(paneEl, st)) { closeHistStream(paneEl); return; }
     try {
-      const nextData = JSON.parse(e.data);
-      st.statusEl.textContent = '已连接';
-      st.streamRevision = (st.streamRevision || 0) + 1;
-      st.nextStreamData = nextData;
-      if (!st.streamFrame) st.streamFrame = requestAnimationFrame(() => {
-        st.streamFrame = 0;
-        const latest = st.nextStreamData;
-        st.nextStreamData = null;
-        if (latest && st.es === es && st.root.classList.contains('open')) applyHistData(paneEl, latest, !st.data, !!st.data);
-      });
+      queueStreamData(JSON.parse(e.data));
     } catch (err) {}
+  });
+  es.addEventListener('hist-tail', e => {
+    if (st.es !== es || isWebtermPaused()) return;
+    if (!isOpenHistOverlay(paneEl, st)) { closeHistStream(paneEl); return; }
+    try {
+      const delta = JSON.parse(e.data);
+      const base = st.streamSnapshot;
+      if (base?.digest && delta.baseDigest === base.digest && delta.digest &&
+          delta.turnCount > 0 && base.turns?.length === delta.turnCount && delta.turn) {
+        const {baseDigest, turnCount, turn, ...fields} = delta;
+        queueStreamData({...base, ...fields, turns: [...base.turns.slice(0, -1), turn]});
+        return;
+      }
+    } catch (err) {}
+    // A fresh connection always starts with a full snapshot.
+    closeHistStream(paneEl);
+    openHistStream(paneEl);
   });
 }
 
 function syncHistStreams(){
+  const timeoutMs = wtNet.streamTimeoutMs();
   for (const el of paneEls.values()) {
     const st = paneHistState.get(el);
     if (!st) continue;
-    const shouldStream = !document.hidden && el.isConnected && el.classList.contains('on') && st.root.classList.contains('open');
-    if (shouldStream) openHistStream(el);
-    else closeHistStream(el);
+    const shouldStream = !isWebtermPaused() && el.isConnected && el.classList.contains('on') && st.root.classList.contains('open');
+    if (!shouldStream) {
+      closeHistStream(el);
+      continue;
+    }
+    if (st.es && Date.now() - st.lastStreamActivityAt >= timeoutMs) {
+      closeHistStream(el);
+      refreshHistPane(el, false, true);
+    }
+    openHistStream(el);
   }
 }
 
@@ -3785,7 +4477,7 @@ function openHistoryOverlay(paneEl = getFocusedPaneEl(), recordOpen = true, reas
     const disSet = readSessSet(HIST_DISMISSED_KEY); disSet.delete(sess); writeSessSet(HIST_DISMISSED_KEY, disSet);
   }
   const st = ensureHistOverlay(paneEl);
-  st.openedForAgent = (reason === 'auto') || st.openedForAgent;
+  st.openedForAgent = reason === 'auto';
   st.shellIdleTicks = 0;
   const firstOpen = !st.data;
   st.root.classList.add('open');
@@ -3806,14 +4498,18 @@ function closeHistoryOverlay(paneEl = getFocusedPaneEl(), force = false){
   closeHistStream(paneEl);
   const st = paneHistState.get(paneEl);
   if (st) {
+    st.refreshId = (st.refreshId || 0) + 1;
+    st.screenRevision = (st.screenRevision || 0) + 1;
+    st.pendingData = null;
     st.root.classList.remove('open');
     st.selPopEl.classList.remove('open');
     st.shellIdleTicks = 0;
     st.openedForAgent = false;
   }
   paneEl.classList.remove('hist-active');
+  if (paneEl.querySelector('iframe')?.dataset.resumeOnReveal === '1') updateTerminalConnection(paneEl);
   syncHistBtnState();
-  focusActive();
+  if (paneEl === getFocusedPaneEl()) focusActive();
 }
 
 function toggleHistoryOverlay(paneEl = getFocusedPaneEl()){
@@ -3854,17 +4550,17 @@ async function checkAutoFoldNow(paneEl){
   if (paneEl.dataset.autoFoldChecking === '1') return;
   paneEl.dataset.autoFoldChecking = '1';
   try {
-    const r = await fetch('/history?s=' + encodeURIComponent(sess) + '&probe=1', { cache: 'no-store' });
+    const r = await fetch('/history?s=' + encodeURIComponent(sess) + '&probe=1', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
     if (!r.ok) return;
     const d = await r.json();
     if (d.pending) return;
-    if (!paneEl.isConnected || !paneEl.classList.contains('on')) return;
+    if (!paneEl.isConnected || !paneEl.classList.contains('on') || paneEl.dataset.sess !== sess) return;
     if (!FOLD_ONLY_PUBLIC && readSessSet(HIST_DISMISSED_KEY).has(sess)) return;
     const nowCur = paneHistState.get(paneEl);
     if (nowCur && nowCur.root.classList.contains('open')) return;
     const activeNow = Boolean(d.runningAgent || isAgentCmdName(d.cmd) || (d.agent && !isShellCmdName(d.cmd)));
     if (activeNow) {
-      openHistoryOverlay(paneEl, !FOLD_ONLY_PUBLIC, 'auto');
+      openHistoryOverlay(paneEl, false, 'auto');
     }
   } catch (e) {
   } finally {
@@ -3879,9 +4575,11 @@ function pollActiveAgentFold(){
   return foldRequest;
 }
 async function fetchActiveAgentFold(){
-  if (document.hidden) return;
+  if (isWebtermPaused()) return;
   const toOpen = [];
   const toWatchExit = [];
+  const isVisiblePane = (el, sess) => !isWebtermPaused() &&
+    el.isConnected && el.classList.contains('on') && el.dataset.sess === sess;
   const disSet = FOLD_ONLY_PUBLIC ? new Set() : readSessSet(HIST_DISMISSED_KEY);
   for (const el of paneEls.values()) {
     if (!el.isConnected || !el.classList.contains('on')) continue;
@@ -3889,11 +4587,11 @@ async function fetchActiveAgentFold(){
     if (!sess) continue;
     const st = paneHistState.get(el);
     if (st && st.root.classList.contains('open')) {
-      if (st.openedForAgent || (st.data && st.data.runningAgent)) toWatchExit.push(el);
+      if (st.openedForAgent) toWatchExit.push({el, sess, st});
       continue;
     }
     if (disSet.has(sess)) continue;
-    toOpen.push(el);
+    toOpen.push({el, sess});
   }
   if (!toOpen.length && !toWatchExit.length) return;
   try {
@@ -3902,21 +4600,18 @@ async function fetchActiveAgentFold(){
     const j = await r.json();
     const cmds = (j && j.cmds) || {};
     const agents = (j && j.agents) || {};
-    for (const el of toOpen) {
-      const sess = el.dataset && el.dataset.sess;
-      if (!sess || (!FOLD_ONLY_PUBLIC && readSessSet(HIST_DISMISSED_KEY).has(sess))) continue;
+    for (const {el, sess} of toOpen) {
+      if (!isVisiblePane(el, sess) || isOpenHistOverlay(el, paneHistState.get(el))) continue;
+      if (!FOLD_ONLY_PUBLIC && readSessSet(HIST_DISMISSED_KEY).has(sess)) continue;
       if (agents[sess] || isAgentCmdName(cmds[sess])) {
-        openHistoryOverlay(el, !FOLD_ONLY_PUBLIC, 'auto');
+        openHistoryOverlay(el, false, 'auto');
       }
     }
-    for (const el of toWatchExit) {
-      const sess = el.dataset && el.dataset.sess;
-      const st = sess && paneHistState.get(el);
-      if (!st) continue;
+    for (const {el, sess, st} of toWatchExit) {
+      if (!isVisiblePane(el, sess) || !isOpenHistOverlay(el, st) || !st.openedForAgent) continue;
       if (isShellCmdName(cmds[sess]) && !agents[sess]) {
         st.shellIdleTicks = (st.shellIdleTicks || 0) + 1;
         if (st.shellIdleTicks >= 3) {
-          const openSet = readSessSet(HIST_OPEN_KEY); openSet.delete(sess); writeSessSet(HIST_OPEN_KEY, openSet);
           closeHistoryOverlay(el, true);
         }
       } else {
@@ -3926,18 +4621,102 @@ async function fetchActiveAgentFold(){
   } catch (e) {}
 }
 
-document.addEventListener('visibilitychange', syncHistStreams);
+function suspendWebterm(){
+  backgroundSince ??= Date.now();
+  clearTimeout(resumeTimer);
+  resumeTimer = 0;
+  syncHistStreams();
+  for (const el of paneEls.values()) {
+    const st = paneHistState.get(el);
+    if (st) saveHistDraft(st);
+  }
+}
+
+function scheduleWebtermResume(){
+  if (isWebtermPaused() || resumeTimer) return;
+  // Browsers can dispatch focus, pageshow and visibilitychange for the same return.
+  resumeTimer = setTimeout(() => {
+    resumeTimer = 0;
+    if (isWebtermPaused()) return;
+    const wasSuspended = backgroundSince !== null;
+    const longPause = wasSuspended && Date.now() - backgroundSince >= 60000;
+    backgroundSince = null;
+    syncHistStreams();
+    for (const pane of paneEls.values()) {
+      if (!pane.classList.contains('on')) continue;
+      updateTerminalConnection(pane, true, longPause);
+      const st = paneHistState.get(pane);
+      if (isOpenHistOverlay(pane, st)) {
+        if (wasSuspended) refreshHistPane(pane, false, true);
+        st.nextScreenStatusAt = 0;
+        st.refreshLive();
+      }
+    }
+    pollActiveAgentFold();
+  }, 180);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) suspendWebterm();
+  else scheduleWebtermResume();
+});
+window.addEventListener('pagehide', () => {
+  pageSuspended = true;
+  suspendWebterm();
+});
+window.addEventListener('pageshow', () => {
+  pageSuspended = false;
+  scheduleWebtermResume();
+});
+window.addEventListener('focus', scheduleWebtermResume);
+window.addEventListener('offline', suspendWebterm);
+window.addEventListener('online', scheduleWebtermResume);
 setInterval(syncHistStreams, 2000);
-setInterval(pollActiveAgentFold, 800);
+(function scheduleFoldPoll(){
+  setTimeout(async () => {
+    try { await pollActiveAgentFold(); } finally { scheduleFoldPoll(); }
+  }, wtNet.foldPollMs());
+})();
 
 // Follow the visual viewport so the compose box stays above a mobile keyboard.
+const iosViewport = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 if (window.visualViewport) {
+  const viewport = window.visualViewport;
+  const app = document.getElementById('app');
+  let viewportFrame = 0;
+  let viewportSettleTimer = 0;
   const fitViewport = () => {
-    document.getElementById('app').style.height = window.visualViewport.height + 'px';
-    document.getElementById('app').style.top = window.visualViewport.offsetTop + 'px';
+    const {height, offsetTop, scale} = viewport;
+    if (document.hidden || height <= 0 || (scale && Math.abs(scale - 1) > .02)) return;
+    app.style.height = height + 'px';
+    app.style.top = offsetTop + 'px';
+    document.documentElement.style.setProperty('--wt-viewport-height', height + 'px');
+    document.documentElement.classList.toggle('kb-open', window.innerHeight - height > 120);
   };
-  window.visualViewport.addEventListener('resize', fitViewport);
-  window.visualViewport.addEventListener('scroll', fitViewport);
+  const queueViewportFit = () => {
+    if (viewportFrame || document.hidden) return;
+    viewportFrame = requestAnimationFrame(() => {
+      viewportFrame = 0;
+      fitViewport();
+    });
+  };
+  const recoverViewport = () => {
+    clearTimeout(viewportSettleTimer);
+    if (document.hidden) return;
+    queueViewportFit();
+    // iOS Safari can publish the final keyboard or toolbar geometry after pageshow.
+    if (iosViewport) viewportSettleTimer = setTimeout(queueViewportFit, 400);
+  };
+  viewport.addEventListener('resize', queueViewportFit);
+  viewport.addEventListener('scroll', queueViewportFit);
+  window.addEventListener('resize', queueViewportFit);
+  window.addEventListener('pageshow', recoverViewport);
+  document.addEventListener('visibilitychange', recoverViewport);
+  if (iosViewport) {
+    window.addEventListener('focus', recoverViewport);
+    window.addEventListener('orientationchange', recoverViewport);
+  }
   fitViewport();
 }
 
@@ -3956,7 +4735,10 @@ if (window.visualViewport) {
   };
   const REPEATABLE = new Set(['up', 'down', 'left', 'right']);
   let hold = null;
-  const focusedTarget = () => getFocusedPaneEl() || [...paneEls.values()].find(p => p.classList.contains('on'));
+  const focusedTarget = () => {
+    const pane = getFocusedPaneEl() || [...paneEls.values()].find(p => p.classList.contains('on'));
+    return pane?.classList.contains('hist-active') ? null : pane;
+  };
 
   function stopRepeat(event){
     if (!hold || (event?.pointerId != null && event.pointerId !== hold.pointerId)) return;
@@ -3971,11 +4753,6 @@ if (window.visualViewport) {
     if (!sent) {
       toast('发送结果未确认，请查看终端后再操作');
       return false;
-    }
-    const st = paneHistState.get(target);
-    if (st && target.classList.contains('hist-active')) {
-      if (typeof st.refreshLive === 'function') setTimeout(st.refreshLive, 100);
-      pokeHistStream(st.sess);
     }
     return true;
   }
@@ -4028,6 +4805,12 @@ document.getElementById('add').onclick = () => newTab();
 document.getElementById('split-h').onclick = () => splitPane('h');
 document.getElementById('split-v').onclick = () => splitPane('v');
 closePaneBtn.onclick = () => closeActivePane();
+mobilePaneSelect.onchange = () => {
+  if (!active || !findLeaf(active.root, mobilePaneSelect.value)) return;
+  active.activePaneId = mobilePaneSelect.value;
+  render();
+};
+singlePaneMedia.addEventListener('change', render);
 
 const canReadClipboard = !!(navigator.clipboard && navigator.clipboard.read);
 if (canReadClipboard) document.getElementById('paste').onclick = pasteFromClipboard;
@@ -4053,8 +4836,13 @@ document.addEventListener('keydown', e => {
 });
 
 if (!restoreState()) newTab();
-loadSys();
-setInterval(() => { if (!document.hidden) loadSys(); }, 5000);
+if (FOLD_ONLY_PUBLIC) setTimeout(() => { if (!document.hidden) loadSys(); }, 1200);
+else loadSys();
+(function scheduleSysPoll(){
+  setTimeout(async () => {
+    try { if (!document.hidden) await loadSys(); } finally { scheduleSysPoll(); }
+  }, wtNet.sysMs());
+})();
 document.addEventListener('visibilitychange', () => { if (!document.hidden) loadSys(); });
 
 (function setupWallpaper(){
@@ -4067,19 +4855,28 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) load
   if (!el || !btn) return;
   const lbl = btn.querySelector('.lbl');
   let cur = FIXED_WALL;
+  let wallApplied = false;
   try { localStorage.setItem(WALL_KEY, FIXED_WALL); } catch (e) {}
 
   function applyWallUrl(name){
+    if (wallApplied) return;
+    wallApplied = true;
     const val = 'url("/wallpaper/' + encodeURIComponent(name) + '")';
     el.style.backgroundImage = val;
     if (blurEl) blurEl.style.backgroundImage = val;
+    el.classList.remove('off');
   }
 
-  applyWallUrl(cur);
-  el.classList.remove('off');
+  if (FOLD_ONLY_PUBLIC) {
+    // Defer decorative wallpaper fetch on public links until conversation loads.
+    setTimeout(() => { if (!document.hidden) applyWallUrl(cur); }, 2600);
+  } else {
+    applyWallUrl(cur);
+  }
 
   function setPeek(on){
     const next = typeof on === 'boolean' ? on : !document.body.classList.contains('wall-peek');
+    if (next) applyWallUrl(cur);
     document.body.classList.toggle('wall-peek', next);
     btn.setAttribute('aria-pressed', String(next));
     if (lbl) lbl.textContent = next ? '回终端' : '看壁纸';

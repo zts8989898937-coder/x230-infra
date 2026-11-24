@@ -9,3 +9,59 @@ test('incremental append handles partial JSON, then catches the completed messag
 test('file reset reloads rather than mixing old history; mismatched identity is rejected',async t=>{const f=await fixture(t);await f.read('Test thread | /work','/work');await fs.writeFile(f.file,line({type:'session_meta',payload:{id:'wrong',cwd:'/work'}})+line(msg('user','wrong session','new')));assert.equal(await f.read('Test thread | /work','/work'),null);});
 test('concurrent polling does not duplicate appended rounds',async t=>{const f=await fixture(t);await f.read('Test thread | /work','/work');await fs.appendFile(f.file,line(msg('user','并发追加','u26')));const results=await Promise.all(Array.from({length:8},()=>f.read('Test thread | /work','/work')));for(const out of results)assert.equal(out.turns.length,26);});
 test('rollout paths outside Codex session storage are rejected',async t=>{const f=await fixture(t);const outside=path.join(f.home,'outside.jsonl');await fs.copyFile(f.file,outside);f.db.prepare('UPDATE threads SET rollout_path=?').run(outside);assert.equal(await f.read('Test thread | /work','/work'),null);});
+
+test('folded history retains the final_answer that follows commentary', async t => {
+  const f = await fixture(t);
+  const read = () => f.read('Test thread | /work', '/work');
+  const assistant = (phase, text) => {
+    const record = msg('assistant', text);
+    record.payload.phase = phase;
+    return line(record);
+  };
+  await fs.appendFile(f.file, line(msg('user', '看看当前有哪些记忆')) +
+    assistant('commentary', '我先检查。'));
+  assert.equal((await read()).turns.at(-1).reply, '我先检查。');
+
+  await fs.appendFile(f.file, assistant('analysis', '内部分析') +
+    assistant('final_answer', '完整回答\n\n- 第一项\n- 第二项'));
+  assert.equal((await read()).turns.at(-1).reply, '我先检查。\n\n完整回答\n\n- 第一项\n- 第二项');
+});
+
+test('same-title histories use exact visible prompts and reject ambiguous or stale matches', async t => {
+  const f = await fixture(t);
+  const other = path.join(path.dirname(f.file), 'two.jsonl');
+  f.db.prepare('INSERT INTO threads VALUES(?,?,?,?,?)')
+    .run('thread-two', 'Test thread', 'other', '/work', other);
+  const first = '请保留现有会话，并检查手机窄屏下的对话布局';
+  const second = '我需要针对 Safari 浏览器的特点进行针对性的优化';
+  const shared = '检查完整记录里是否有重复出现的消息';
+  const append = (file, ...prompts) => fs.appendFile(file, prompts.map(prompt => line(msg('user', prompt))).join(''));
+  const read = (...prompts) => f.read('Test thread | /work', '/work', prompts.map(prompt => ({ prompt })));
+
+  await append(f.file, first, second);
+  await fs.writeFile(other, line({ type: 'session_meta', payload: { id: 'thread-two', cwd: '/work' } }));
+  await append(other, shared, second, shared);
+  assert.equal((await read(first, second.replace('的优化', '的\n优化')))?.threadId, 'thread-one');
+  assert.equal((await read(shared))?.threadId, 'thread-two');
+  assert.equal(await read(second), null);
+  assert.equal(await read(second, first), null);
+  assert.equal(await read('继续'), null);
+  assert.equal(await read(first), null);
+  await append(other, first, second);
+  assert.equal(await read(first, second), null);
+  await fs.unlink(other);
+  assert.equal(await read(first, second), null);
+});
+
+test('a unique title cannot override conflicting visible prompts', async t => {
+  const f = await fixture(t);
+  assert.equal(await f.read('Test thread | /work', '/work', [
+    { prompt: 'A visible question from a different terminal' }
+  ]), null);
+});
+
+test('oversized rollout files fall back without being loaded', async t => {
+  const f = await fixture(t);
+  await fs.truncate(f.file, 64 * 1024 * 1024 + 1);
+  assert.equal(await f.read('Test thread | /work', '/work'), null);
+});

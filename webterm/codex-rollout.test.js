@@ -16,7 +16,7 @@ test('parses session_meta, turn_context, and modern user/assistant turns', () =>
     {
       timestamp: '2026-11-16T01:00:01Z',
       type: 'turn_context',
-      payload: { turn_id: 't1', model: 'gpt-5.4', cwd: '/home/zts/project' },
+      payload: { turn_id: 't1', model: 'gpt-5.4', effort: 'medium', cwd: '/home/zts/project' },
     },
     {
       type: 'response_item',
@@ -58,6 +58,7 @@ test('parses session_meta, turn_context, and modern user/assistant turns', () =>
   assert.equal(res.threadId, 'thread-abc-123');
   assert.equal(res.cwd, '/home/zts/project');
   assert.equal(res.model, 'gpt-5.4');
+  assert.equal(res.effort, 'medium');
   assert.equal(res.turns.length, 1);
   assert.deepEqual(res.turns[0], {
     id: 'msg-u1',
@@ -455,4 +456,15 @@ test('ignores incomplete JSON lines while continuing to parse subsequent valid l
   assert.equal(res.turns.length, 1);
   assert.equal(res.turns[0].prompt, '第一问');
   assert.equal(res.turns[0].reply, '有效后续回复');
+});
+
+test('legacy private phases and injected context are excluded from visible history', () => {
+  const event = (type, message, phase) => ({ type: 'event_msg', payload: { type, message, phase } });
+  const result = parseCodexRollout(jsonl([
+    event('user_message', '<environment_context>private setup</environment_context>'),
+    event('user_message', 'visible question'),
+    event('agent_message', 'private analysis', 'analysis'),
+    event('agent_message', 'visible answer', 'final_answer')
+  ]));
+  assert.deepEqual(result.turns.map(({ prompt, reply }) => [prompt, reply]), [['visible question', 'visible answer']]);
 });

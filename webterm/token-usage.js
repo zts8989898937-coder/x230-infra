@@ -10,7 +10,7 @@ const DSH_PROJCACHE_DIR = path.join(HOME, '.dsh/storages/session_projcache/sessi
 const CODEX_SESSIONS_DIR = path.join(HOME, '.codex/sessions');
 const CLAUDE_PROJECTS_DIR = path.join(HOME, '.claude/projects');
 
-const CACHE_TTL_MS = 120 * 1000;
+const CACHE_TTL_MS = 30 * 1000;
 const USD_TO_CNY = 7.25;
 
 // 公开 API 参考单价（USD / 1M tokens）：
@@ -65,6 +65,54 @@ function listFilesRecursive(dir, ext) {
     }
   }
   return out;
+}
+
+function openRecord(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (stat.isFile()) return { fd, size: stat.size };
+    throw new Error('usage log is not a regular file');
+  } catch (err) {
+    fs.closeSync(fd);
+    throw err;
+  }
+}
+
+function* usageRecords(file) {
+  let fd;
+  try {
+    const record = openRecord(file);
+    fd = record.fd;
+    const chunk = Buffer.allocUnsafe(256 * 1024);
+    const maxLineBytes = 8 * 1024 * 1024;
+    let parts = [], bytes = 0;
+    for (let pos = 0; pos < record.size;) {
+      const count = fs.readSync(fd, chunk, 0, Math.min(chunk.length, record.size - pos), pos);
+      if (!count) break;
+      pos += count;
+      for (let start = 0; start < count;) {
+        const newline = chunk.indexOf(10, start);
+        const end = newline === -1 || newline >= count ? count : newline;
+        bytes += end - start;
+        if (bytes > maxLineBytes) parts = [];
+        else if (end > start) parts.push(Buffer.from(chunk.subarray(start, end)));
+        if (end < count || pos === record.size) {
+          if (parts.length) {
+            let data;
+            try { data = JSON.parse(Buffer.concat(parts).toString('utf8')); } catch {}
+            if (data && typeof data === 'object') yield data;
+          }
+          parts = [];
+          bytes = 0;
+        }
+        start = end + 1;
+      }
+    }
+  } catch {
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 function isDeepSeekPeak(isoStr) {
@@ -191,7 +239,15 @@ function scanAllLogs() {
   for (const file of dshFiles) {
     let data;
     try {
-      data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const { fd, size } = openRecord(file);
+      try {
+        if (size > 64 * 1024 * 1024) continue;
+        const buffer = Buffer.allocUnsafe(size);
+        const bytes = fs.readSync(fd, buffer, 0, size, 0);
+        data = JSON.parse(buffer.toString('utf8', 0, bytes));
+      } finally {
+        fs.closeSync(fd);
+      }
     } catch {
       continue;
     }
@@ -232,14 +288,10 @@ function scanAllLogs() {
 
   // Codex counters are cumulative. Attribute only new tokens at each event.
   for (const file of listFilesRecursive(CODEX_SESSIONS_DIR, '.jsonl')) {
-    let raw;
-    try { raw = fs.readFileSync(file, 'utf8'); } catch { continue; }
     let model = 'gpt-6.1-sol';
     let previous = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0 };
     const touched = new Set();
-    for (const line of raw.split('\n')) {
-      let d;
-      try { d = JSON.parse(line); } catch { continue; }
+    for (const d of usageRecords(file)) {
       if (d.type === 'turn_context' && d.payload && d.payload.model) model = d.payload.model;
       if (d.type !== 'event_msg' || !d.payload || d.payload.type !== 'token_count') continue;
       const total = d.payload.info && d.payload.info.total_token_usage;
@@ -267,21 +319,8 @@ function scanAllLogs() {
   const claudeFiles = listFilesRecursive(CLAUDE_PROJECTS_DIR, '.jsonl');
   const seenMsgs = new Set();
   for (const file of claudeFiles) {
-    let raw;
-    try {
-      raw = fs.readFileSync(file, 'utf8');
-    } catch {
-      continue;
-    }
     const touched = new Set();
-    for (const line of raw.split('\n')) {
-      if (!line) continue;
-      let d;
-      try {
-        d = JSON.parse(line);
-      } catch {
-        continue;
-      }
+    for (const d of usageRecords(file)) {
       const msg = (d.message && typeof d.message === 'object') ? d.message : d;
       const u = msg.usage;
       if (!u || typeof u !== 'object') continue;
